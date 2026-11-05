@@ -1,0 +1,29 @@
+{
+	admin off
+}
+
+# 本地/内网：Caddy 内部 CA + 自签证书。生产域名请用 Caddyfile.prod。
+http://{$APP_DOMAIN:localhost}:{$HTTP_PORT:8080} {
+	redir https://{$APP_DOMAIN:localhost}:{$HTTPS_PORT:8443}{uri} 308
+}
+
+https://{$APP_DOMAIN:localhost}:{$HTTPS_PORT:8443} {
+	tls internal
+	encode zstd gzip
+
+	reverse_proxy {$APP_UPSTREAM:app:8000} {
+		flush_interval -1
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	request_body {
+		max_size 50MB
+	}
+}

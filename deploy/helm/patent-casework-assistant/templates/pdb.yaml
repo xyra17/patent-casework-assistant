@@ -1,0 +1,13 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "patent-casework-assistant.fullname" . }}
+  labels:
+    {{- include "patent-casework-assistant.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "patent-casework-assistant.selectorLabels" . | nindent 6 }}
+{{- end }}

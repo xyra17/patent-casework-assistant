@@ -1,0 +1,11 @@
+flowchart LR
+    S["白名单共享盘：原件只读"] --> SCAN["增量扫描<br/>内容哈希 / 格式识别 / 原生文本或本地 MinerU OCR"]
+    SCAN --> FIELD["案件信息与逐场会议<br/>字段候选 / 缺失 / 冲突"]
+    FIELD --> DB[("SQLite 发布快照<br/>MySQL 结构化投影")]
+    SCAN --> BODY["案卷正文<br/>保留案号、段落与版本"]
+    BODY --> CASE["本地 Qwen3 + BM25 + 技术别名<br/>正向机制与否定过滤 / 按案归并"]
+    CASE --> CE["案件命中 + 原文证据"]
+    K["普通知识库文档"] --> CHUNK["多格式解析与分块"]
+    CHUNK --> HYBRID["本地 Qwen3 / Chroma + BM25<br/>RRF 融合 + 轻量确定性重排"]
+    HYBRID --> HOP["有限多跳<br/>覆盖检查 / 缺口 / 停止原因"]
+    HOP --> KE["知识片段 + 位置与索引版本"]

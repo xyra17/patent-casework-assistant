@@ -1,0 +1,7 @@
+{
+  "manual_case_notes": {
+    "label": "仅数据库唯一约束",
+    "columns": [],
+    "notice": "同一案件允许多条补充记录，不按正文自动合并。"
+  }
+}

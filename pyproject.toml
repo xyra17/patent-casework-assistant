@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "patent-casework-assistant"
+version = "1.0.0"
+description = "Patent Casework Assistant"
+requires-python = ">=3.12"
+dependencies = [
+    # Web 框架 / ASGI 服务器
+    "fastapi>=0.136",
+    "uvicorn>=0.48",
+    "python-multipart>=0.0.32",  # FastAPI 表单/文件上传（UploadFile、Form）依赖
+    # 多智能体框架
+    "deepagents==0.7.24",  # Harness 按公开中间件名称替换接口验证的版本
+    "tiktoken>=0.14,<0.15",  # 本地上下文估算；实际账单以 provider usage 为准
+    # LLM 接入（OpenAI 兼容协议）
+    "langchain-openai",
+    "langchain",
+    "langchain-core",
+    # 数据库驱动
+    "mysql-connector-python>=9.7",
+    "sqlglot>=28,<29",  # SQL控制台语法树与业务库范围校验
+    # 向量数据库（本地 Chroma）
+    "langchain-chroma",
+    # Embedding（本地 BGE 模型）
+    "langchain-huggingface",
+    "sentence-transformers",
+    # 文档分块
+    "langchain-text-splitters",
+    "jieba==0.42.1",  # 查询对象分词；原问题对象核对独立于召回扩展
+    # 全网检索
+    "tavily-python>=0.7",
+    # 文档解析
+    "python-docx",
+    "pypdf",
+    "pypdfium2>=5.13,<6",  # PDF页面渲染，用于视觉理解
+    "pillow>=11",
+    "openpyxl",
+    "pandas",
+    "xlrd",
+    "reportlab",
+    # PDF 生成（Markdown → Word COM）
+    "markdown",
+    "pywin32>=306; sys_platform == 'win32'",
+    # 横切关注点
+    "colorlog",
+    "pyyaml",
+    "python-dotenv",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agent", "agent.*", "api", "tools", "utils", "harness", "rules", "scripts", "prompt", "semantic", "config", "frontend", "casework"]
+namespaces = true
+
+[tool.setuptools.package-data]
+prompt = ["*.yaml"]
+semantic = ["*.yaml"]
+config = ["*.json"]
+casework = ["*.json"]
+frontend = ["dist/*", "dist/assets/*"]
+
+[project.scripts]
+patent-casework-assistant = "api.server:start_server"
+tanyuan = "api.server:start_server"
+
+[project.optional-dependencies]
+eval = ["ragas", "datasets"]

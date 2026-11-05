@@ -1,0 +1,7 @@
+Patent Casework Assistant已安装。
+
+1. 若 ingress.enabled=true，请把 ingress.host 改成你的域名，并让 cert-manager/证书 secret 就绪。
+2. 当前 chart 默认 replicaCount=1，因为 SQLite 任务库、会话文件和 Chroma 都是本地状态。
+   真正的多副本 HA 需要先把这三类状态外置，详见 docs/kubernetes-ha.md。
+3. 首次访问知识库前，请把文档放入 knowledgeBase.existingClaim 指向的 PVC，并执行镜像内的
+   scripts/build_knowledge_base.py（或预先构建好 vector_store）。

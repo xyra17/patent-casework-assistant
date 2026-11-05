@@ -1,0 +1,323 @@
+{
+  "groups": [
+    {
+      "id": "daily",
+      "label": "日常业务",
+      "description": "查案件、找材料、回顾会议和核对期限"
+    },
+    {
+      "id": "complex",
+      "label": "综合分析",
+      "description": "结合多种资料完成比较、分案参考和业务月报"
+    },
+    {
+      "id": "analytics",
+      "label": "数据分析",
+      "description": "统计业务数据、比较登记负荷并生成图表"
+    },
+    {
+      "id": "research",
+      "label": "资料检索",
+      "description": "查询公司内部要求，检索公开技术资料"
+    },
+    {
+      "id": "attachments",
+      "label": "上传文件",
+      "description": "先选择本地文件，再提交对比或检索任务"
+    }
+  ],
+  "featured_template_ids": [
+    "assignment-reference",
+    "public-comparison",
+    "business-charts"
+  ],
+  "templates": [
+    {
+      "id": "case-date",
+      "group": "daily",
+      "label": "案件日期核对",
+      "mode": "quick",
+      "allowed_sources": [
+        "db_query"
+      ],
+      "value": "帮我查一下 AI-2026-017 的收案日期，我要填进月报。",
+      "description": "核对指定案件的实际日期，直接给出记录结果"
+    },
+    {
+      "id": "similar-case",
+      "group": "daily",
+      "label": "查找相似案件",
+      "mode": "quick",
+      "allowed_sources": [
+        "knowledge"
+      ],
+      "value": "最近有个方案要做跨请求缓存隔离，我们以前办过类似的案子吗？帮我找一件，顺便把相关原文和文件位置给我。",
+      "description": "从技术正文找参考材料，附原文定位"
+    },
+    {
+      "id": "meeting-history",
+      "group": "daily",
+      "label": "回顾客户会议",
+      "mode": "quick",
+      "allowed_sources": [
+        "db_query"
+      ],
+      "value": "我准备跟测试客户01（模拟）的测试IPR01（模拟）沟通，帮我翻一下以前的三方会议：都哪天开的、聊的是哪个案子、我们谁参加了，还有什么材料没补？",
+      "description": "按实际会议记录整理沟通内容和待补事项"
+    },
+    {
+      "id": "monthly-counts",
+      "group": "daily",
+      "label": "月度业务统计",
+      "mode": "analysis",
+      "allowed_sources": [
+        "db_query"
+      ],
+      "value": "帮我对一下2026年9月和10月的收案、交局数量。我要实际发生的，日期没记或对不上的案子另外列出来。",
+      "description": "核对两个月的实际业务量和未知日期"
+    },
+    {
+      "id": "deadline-pressure",
+      "group": "daily",
+      "label": "初稿期限排查",
+      "mode": "quick",
+      "allowed_sources": [
+        "db_query"
+      ],
+      "value": "帮我看看手头在办的案子，哪些初稿已经逾期，哪些两周内要交？初稿期限没填的也单独列一下，带上案号和承办人。",
+      "description": "查看逾期、近期到期和日期未知的案件"
+    },
+    {
+      "id": "case-deadlines",
+      "group": "daily",
+      "label": "案件三项期限核对",
+      "mode": "quick",
+      "allowed_sources": [
+        "db_query"
+      ],
+      "value": "AI-2026-032 的初稿、送客户审核、向局提交分别定在什么时候？把日期和出处给我，没记或有冲突的直接说清楚，别当成已经完成。",
+      "description": "核对初稿、客户送审和向局提交三个期限"
+    },
+    {
+      "id": "case-materials",
+      "group": "daily",
+      "label": "案卷与待补材料",
+      "mode": "auto",
+      "allowed_sources": [
+        "db_query",
+        "knowledge"
+      ],
+      "value": "帮我把 AI-2026-032 的材料捋一下：谁在负责，方案的核心机制是什么，上次会议说还要补哪些材料？相关记录和原文也带上。",
+      "description": "将案件信息、技术正文和登记待补材料放在一起核对"
+    },
+    {
+      "id": "assignment-reference",
+      "group": "complex",
+      "label": "新案分配参考",
+      "mode": "auto",
+      "allowed_sources": [
+        "db_query",
+        "knowledge"
+      ],
+      "value": "新来了个缓存隔离方向的 AI 案子，交给谁比较合适？帮我看看谁办过类似技术，再对一下大家手头的案量和初稿、客户送审、向局提交这三个期限，给我几个候选和理由，我来定。",
+      "description": "结合相关经历和登记负荷，辅助主管选择承办人"
+    },
+    {
+      "id": "public-comparison",
+      "group": "complex",
+      "label": "技术对照与人员负荷",
+      "mode": "auto",
+      "allowed_sources": [
+        "db_query",
+        "knowledge",
+        "web_search"
+      ],
+      "value": "我想了解 AI-2026-032 的方案有什么特点。先看案卷里实际怎么写的，再找一两种相关的公开做法对照一下。另外帮我看看负责这个案子的同事，手头案子和近期三个期限是怎么排的，结论带上出处。",
+      "description": "联查案卷、公开资料和负责人负荷；本次将启用网络检索"
+    },
+    {
+      "id": "monthly-report",
+      "group": "complex",
+      "label": "生成部门业务月报",
+      "mode": "report",
+      "allowed_sources": [
+        "db_query"
+      ],
+      "value": "帮我写份2026年10月的部门月报，重点看实际收案和交局，比一比9月。日期缺失或冲突的单列出来，统计出处也留着，存成Markdown文件。",
+      "description": "汇总月度业务变化和资料缺口，保存为报告文件"
+    },
+    {
+      "id": "business-charts",
+      "group": "analytics",
+      "label": "业务统计与图表",
+      "mode": "analysis",
+      "allowed_sources": [
+        "db_query"
+      ],
+      "value": "帮我按承办人画张在办案量的柱状图，从多到少排，明细表和数据出处也给我。按今天接入的案件信息算，已经实际交局的别算进去，状态不明的单列；我先看看登记负荷，不当成大家可用工时。",
+      "description": "按承办人分析登记案量，生成可查看数据来源的业务图表"
+    },
+    {
+      "id": "document-comparison",
+      "group": "attachments",
+      "label": "两版技术文档对比",
+      "mode": "auto",
+      "allowed_sources": [],
+      "attachments": {
+        "min": 2,
+        "max": 2,
+        "kind": "documents",
+        "hint": "按基准版、对比版的顺序选择两份 Word、PDF 或文本文件"
+      },
+      "value": "我上传了两版技术文档，第一份是基准版，第二份是改后的。帮我看看技术内容增了什么、删了什么、改了什么，把两边原文和页码或段落标出来。文字改动和可能的技术影响分开说，就看这两个文件。",
+      "description": "逐项核对两版交底材料，保留两侧原文位置"
+    },
+    {
+      "id": "table-comparison",
+      "group": "attachments",
+      "label": "两份案件表核对",
+      "mode": "auto",
+      "allowed_sources": [],
+      "attachments": {
+        "min": 2,
+        "max": 2,
+        "kind": "tables",
+        "hint": "按基准表、对比表的顺序选择两份 Excel 或 CSV 文件"
+      },
+      "value": "这两份案件表帮我对一下，第一份是原表，第二份是新表。先看看工作表和表头，按共有的案号对齐，列出新增、少了哪些案子，以及承办人、期限、阶段、实际日期的变化，带上两边工作表和行号。案号有空缺或重复先告诉我，别按行顺序硬对。只看这两份表。",
+      "description": "按案号核对增删和字段变化，不依赖表格行顺序"
+    },
+    {
+      "id": "disclosure-search",
+      "group": "attachments",
+      "label": "上传交底找参考",
+      "mode": "auto",
+      "allowed_sources": [
+        "knowledge"
+      ],
+      "attachments": {
+        "min": 1,
+        "max": 1,
+        "kind": "documents",
+        "hint": "选择一份技术交底文档，再提交检索任务"
+      },
+      "value": "这份交底我刚拿到，帮我读读核心技术是什么，再找找我们以前有没有做过同样机制的案子。把案号、相关原文和相似点给我，交底里没写的细节别补进去。",
+      "description": "从当前交底材料出发，查找有原文依据的历史参考"
+    },
+    {
+      "id": "company-guidance",
+      "group": "research",
+      "label": "公司内部要求查询",
+      "mode": "quick",
+      "allowed_sources": [
+        "knowledge"
+      ],
+      "value": "帮我翻一下公司文档，技术交底一般要交哪些材料？把要求和原文位置给我。找不到现行规定就说没找到，别拿网上的要求来代替。",
+      "description": "查询已接入的公司内部文件；未接入时说明资料缺口"
+    },
+    {
+      "id": "public-reference",
+      "group": "research",
+      "label": "公开技术资料检索",
+      "mode": "quick",
+      "allowed_sources": [
+        "web_search"
+      ],
+      "value": "我想在会前补一下HNSW，帮我找原始论文和Faiss官方说明，发我标题、原始链接，再各用一句话说说讲了什么。只查公开资料，不用内部材料，也不用出报告。",
+      "description": "查找论文及官方文档；本次将启用网络检索"
+    },
+    {
+      "id": "disclosure-report",
+      "group": "attachments",
+      "label": "交底解读与补充清单",
+      "mode": "report",
+      "requirePdf": true,
+      "allowed_sources": [],
+      "attachments": {
+        "min": 1,
+        "max": 1,
+        "kind": "documents",
+        "hint": "选择一份技术交底文档，再提交解读任务"
+      },
+      "value": "我要跟发明人开会了，帮我读一下上传的交底：方案里已经讲清楚了什么，还有哪些条件没说清，需要追问什么、补什么材料？每项追问顺带说下用处，标好原文位置。别把推测写成已有事实，材料里的模拟标记保留，最后给我一份Markdown和PDF。",
+      "description": "解读当前交底，整理会前追问及补充材料，生成PDF"
+    },
+    {
+      "id": "uploaded-table-analysis",
+      "group": "attachments",
+      "label": "上传表格分析与图表",
+      "mode": "analysis",
+      "allowed_sources": [],
+      "attachments": {
+        "min": 1,
+        "max": 1,
+        "kind": "tables",
+        "hint": "选择一份 Excel 或 CSV 文件，再提交分析任务"
+      },
+      "value": "帮我看看这张案件表。先核一下工作表、表头、空值和重复记录，有承办人和状态的话，按承办人统计在办案量，画张柱状图，统计表也给我。算的时候用实际字段，筛选条件和来源行号留着；缺字段或不清楚什么算在办就先问我。只看这个附件。",
+      "description": "按实际表头统计上传数据，生成图表并保留数据来源"
+    },
+    {
+      "id": "scanned-disclosure-search",
+      "label": "扫描交底找参考",
+      "mode": "auto",
+      "allowed_sources": [
+        "knowledge"
+      ],
+      "value": "这份交底是扫描件，帮我先读清楚方案，再找找我们以前有没有做过类似技术。把相似点、不同点和对应原文位置给我，没写清楚的地方别补。",
+      "description": "识别扫描交底，结合案卷原文查找技术参考",
+      "attachments": {
+        "min": 1,
+        "max": 1,
+        "kind": "visual",
+        "hint": "选择一份扫描 PDF 或交底图片"
+      },
+      "group": "attachments"
+    },
+    {
+      "id": "mixed-pdf-check",
+      "label": "混合 PDF 内容核对",
+      "mode": "quick",
+      "allowed_sources": [],
+      "value": "这份交底有文字页，也有扫描页。帮我两页都看一下，整理案号、技术说明，还有部件的编号和数量，标好页码。只看附件，识别不清的地方直接告诉我。",
+      "description": "核对文字页与扫描页，保留页码和识别疑点",
+      "attachments": {
+        "min": 1,
+        "max": 1,
+        "kind": "pdf",
+        "hint": "选择一份含文字页和扫描页的 PDF"
+      },
+      "group": "attachments"
+    },
+    {
+      "id": "patent-drawing-review",
+      "label": "专利附图解读",
+      "mode": "quick",
+      "allowed_sources": [],
+      "value": "我要跟发明人核对这张附图，帮我看看有哪些部件，箭头是怎么连的，再核一下图里的编号和数值。只按图上能看到的说，推测的地方单独标出来。",
+      "description": "查看附图部件与连接关系，区分图示信息和推测",
+      "attachments": {
+        "min": 1,
+        "max": 1,
+        "kind": "visual",
+        "hint": "选择一份专利附图图片或 PDF"
+      },
+      "group": "attachments"
+    },
+    {
+      "id": "scanned-table-analysis",
+      "label": "扫描表格统计与图表",
+      "mode": "analysis",
+      "allowed_sources": [],
+      "value": "这张交底材料里的表格帮我核一下，把部件、编号和数量整理出来，再按部件数量画张柱状图。总数也算一下，保留原表位置；看不清的数字先问我，别猜。只看这张附件。",
+      "description": "识别图片中的表格，核对数字并生成统计图表",
+      "attachments": {
+        "min": 1,
+        "max": 1,
+        "kind": "visual",
+        "hint": "选择一份带清晰表格的扫描 PDF 或图片"
+      },
+      "group": "attachments"
+    }
+  ]
+}

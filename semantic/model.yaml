@@ -1,0 +1,144 @@
+version: 1
+name: 专利代理部门案件工作台
+description: 部门共享盘的只读结构化投影；冲突字段为空，所有数据可回查来源。
+default_timezone: Asia/Shanghai
+tables:
+  cw_cases:
+    label: 部门案件信息（只读同步）
+    primary_key: case_key
+    description: 一行一个目录内所编号。跨根同号须先核对；月报用query_department_cases专用工具排除重复和未知，不能用mtime或计划期限。
+    columns:
+      case_id:
+        label: 所编号
+        role: id
+      client_case_id:
+        label: 客户案号
+        role: id
+      title:
+        label: 发明名称
+        role: attribute
+      client_alias:
+        label: 客户
+        role: dimension
+      owner_name:
+        label: 代理师
+        role: dimension
+      technical_domain:
+        label: 技术领域
+        role: dimension
+      received_date:
+        label: 实际收案日期
+        role: time
+        type: date
+      draft_due_date:
+        label: 初稿期限／所限
+        role: time
+        type: date
+      client_review_due_date:
+        label: 客户送审期限
+        role: time
+        type: date
+      filing_due_date:
+        label: 向局提交期限
+        role: time
+        type: date
+      actual_filed_date:
+        label: 实际交局日期
+        role: time
+        type: date
+      stage:
+        label: 办理阶段
+        role: dimension
+      ipr_contact:
+        label: 立案IPR联系人
+        role: attribute
+      application_type:
+        label: 申请类型
+        role: dimension
+      commission_type:
+        label: 委托类型
+        role: attribute
+      important:
+        label: 重要案件
+        role: attribute
+      urgent:
+        label: 急案
+        role: attribute
+      notes:
+        label: 备注
+        role: attribute
+      case_key:
+        label: 目录内唯一案件键
+        role: id
+      filing_verified:
+        label: 实际交局已核实
+        role: attribute
+      generation:
+        label: 发布代
+        role: attribute
+  cw_meetings:
+    label: 逐场三方会议（只读同步）
+    primary_key: meeting_id
+    columns:
+      meeting_id:
+        label: 会议记录键
+        role: id
+      case_key:
+        label: 所属案件
+        role: foreign_key
+        references: cw_cases.case_key
+      meeting_date:
+        label: 会议日期
+        role: time
+        type: date
+      iprs:
+        label: 实际参会IPR列表
+        role: attribute
+      agents:
+        label: 实际参会代理师列表
+        role: attribute
+      client_alias:
+        label: 客户
+        role: dimension
+      content:
+        label: 会议内容
+        role: text
+  manual_case_notes:
+    label: 人工业务补充（可导入维护）
+    primary_key: note_id
+    columns:
+      note_id:
+        label: 补充编号
+        role: id
+      case_id:
+        label: 关联所编号（人工核对）
+        role: dimension
+      note_type:
+        label: 补充类型
+        role: dimension
+      note_text:
+        label: 补充内容
+        role: text
+      created_at:
+        label: 记录时间
+        role: time
+        type: datetime
+relationships:
+- from: cw_meetings.case_key
+  to: cw_cases.case_key
+  type: many_to_one
+  label: 会议所属案件
+metrics:
+  department_case_count:
+    label: 目录内案件数量
+    table: cw_cases
+    expression: COUNT(DISTINCT case_key)
+    unit: 件
+    format: integer
+    description: 目录内去重。收案和交局月报请用专用程序工具处理真实发生日期、重复案号和未知清单。
+hierarchies: {}
+experience:
+  tagline: 专利代理部门的案件助手
+  description: 检索历史案件，回顾三方会议，查看交付趋势，辅助新案分配。
+  placeholder: 例如：查缓存隔离方案的相似案件，或比较2026年9月和10月收案与交局数量
+  task_examples_catalog: department

@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="830" viewBox="0 0 1440 830" role="img" aria-label="系统架构">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#526276" stroke-width="1.6"/></marker></defs>
+<rect x="0" y="0" width="1440" height="830" fill="#ffffff"/>
+<g font-family="Inter, Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" fill="#243247">
+<text x="46" y="43" font-size="27" font-weight="650" text-anchor="start" fill="#243247">FIGURE 01  /  系统架构</text>
+<text x="46" y="72" font-size="16" font-weight="400" text-anchor="start" fill="#526276">任务入口、执行路径与共同的证据交付边界</text>
+<polyline points="46,88 1394,88" fill="none" stroke="#c9d2dc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="46" y="112" width="1348" height="133" rx="7" fill="#f6f9fc" stroke="#34688d" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="64" y="144" font-size="20" font-weight="650" text-anchor="start" fill="#34688d">交互与服务</text>
+<rect x="78" y="163" width="220" height="59" rx="5" fill="#ffffff" stroke="#34688d" stroke-width="1.7"/>
+<rect x="78" y="163" width="5" height="59" fill="#34688d"/>
+<text x="96" y="199.5" font-size="20" font-weight="650" text-anchor="start" fill="#243247">代理师 / 管理者</text>
+<rect x="369" y="163" width="252" height="59" rx="5" fill="#ffffff" stroke="#34688d" stroke-width="1.7"/>
+<rect x="369" y="163" width="5" height="59" fill="#34688d"/>
+<text x="387" y="199.5" font-size="20" font-weight="650" text-anchor="start" fill="#243247">Vue 3 工作台</text>
+<rect x="692" y="163" width="260" height="59" rx="5" fill="#ffffff" stroke="#34688d" stroke-width="1.7"/>
+<rect x="692" y="163" width="5" height="59" fill="#34688d"/>
+<text x="710" y="199.5" font-size="20" font-weight="650" text-anchor="start" fill="#243247">FastAPI 服务</text>
+<rect x="1023" y="163" width="322" height="59" rx="5" fill="#ffffff" stroke="#34688d" stroke-width="1.7"/>
+<rect x="1023" y="163" width="5" height="59" fill="#34688d"/>
+<text x="1041" y="199.5" font-size="20" font-weight="650" text-anchor="start" fill="#243247">会话 · 文件 · 案件接口</text>
+<polyline points="298,193 369,193" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="621,193 692,193" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="952,193 1023,193" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="46" y="272" width="1348" height="370" rx="7" fill="#faf9fc" stroke="#76679b" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="64" y="304" font-size="20" font-weight="650" text-anchor="start" fill="#76679b">任务执行</text>
+<rect x="78" y="332" width="246" height="88" rx="5" fill="#ffffff" stroke="#76679b" stroke-width="1.7"/>
+<rect x="78" y="332" width="5" height="88" fill="#76679b"/>
+<text x="96" y="363" font-size="20" font-weight="650" text-anchor="start" fill="#243247">任务路由</text>
+<text x="96" y="390" font-size="16" font-weight="400" text-anchor="start" fill="#526276">来源权限与任务要求</text>
+<text x="96" y="414" font-size="16" font-weight="400" text-anchor="start" fill="#526276">固定契约覆盖判断</text>
+<rect x="390" y="307" width="421" height="295" rx="7" fill="#f5faf7" stroke="#4c8069" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="408" y="339" font-size="20" font-weight="650" text-anchor="start" fill="#4c8069">A  固定业务流程</text>
+<rect x="417" y="357" width="367" height="74" rx="5" fill="#ffffff" stroke="#4c8069" stroke-width="1.7"/>
+<rect x="417" y="357" width="5" height="74" fill="#4c8069"/>
+<text x="435" y="388" font-size="20" font-weight="650" text-anchor="start" fill="#243247">受限参数与业务动作</text>
+<text x="435" y="415" font-size="16" font-weight="400" text-anchor="start" fill="#526276">案件信息 · 会议 · 月报 · 推荐</text>
+<rect x="417" y="463" width="367" height="74" rx="5" fill="#ffffff" stroke="#4c8069" stroke-width="1.7"/>
+<rect x="417" y="463" width="5" height="74" fill="#4c8069"/>
+<text x="435" y="494" font-size="20" font-weight="650" text-anchor="start" fill="#243247">程序查询与业务核验</text>
+<text x="435" y="521" font-size="16" font-weight="400" text-anchor="start" fill="#526276">多来源、多步骤；结果按契约检查</text>
+<rect x="855" y="307" width="507" height="295" rx="7" fill="#f8f6fc" stroke="#76679b" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="873" y="339" font-size="20" font-weight="650" text-anchor="start" fill="#76679b">B  DeepAgents 编排</text>
+<rect x="882" y="357" width="453" height="74" rx="5" fill="#ffffff" stroke="#76679b" stroke-width="1.7"/>
+<rect x="882" y="357" width="5" height="74" fill="#76679b"/>
+<text x="900" y="388" font-size="20" font-weight="650" text-anchor="start" fill="#243247">TaskPlan 与受控工具</text>
+<text x="900" y="415" font-size="16" font-weight="400" text-anchor="start" fill="#526276">数据库 / 知识库 / 联网 · 附件</text>
+<rect x="882" y="463" width="453" height="74" rx="5" fill="#ffffff" stroke="#76679b" stroke-width="1.7"/>
+<rect x="882" y="463" width="5" height="74" fill="#76679b"/>
+<text x="900" y="494" font-size="20" font-weight="650" text-anchor="start" fill="#243247">观察证据与有界修正</text>
+<text x="900" y="521" font-size="16" font-weight="400" text-anchor="start" fill="#526276">缺口补查 · 五项内容审查</text>
+<polyline points="822,222 822,260 201,260 201,332" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="324,377 354,377 354,394 417,394" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="324,404 351,404 351,293 835,293 835,394 882,394" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="600,431 600,463" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1108,431 1108,463" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="348" y="362" font-size="15" font-weight="400" text-anchor="start" fill="#4c8069">契约覆盖</text>
+<text x="740" y="287" font-size="15" font-weight="400" text-anchor="start" fill="#76679b">超出契约</text>
+<rect x="46" y="668" width="1348" height="118" rx="7" fill="#fbfaf7" stroke="#9b7541" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="64" y="700" font-size="20" font-weight="650" text-anchor="start" fill="#9b7541">数据与交付</text>
+<rect x="75" y="715" width="355" height="53" rx="5" fill="#ffffff" stroke="#9b7541" stroke-width="1.7"/>
+<rect x="75" y="715" width="5" height="53" fill="#9b7541"/>
+<text x="93" y="748.5" font-size="17" font-weight="650" text-anchor="start" fill="#243247">只读原件 · SQLite · MySQL · 本地索引</text>
+<rect x="516" y="715" width="330" height="53" rx="5" fill="#ffffff" stroke="#9b7541" stroke-width="1.7"/>
+<rect x="516" y="715" width="5" height="53" fill="#9b7541"/>
+<text x="534" y="748.5" font-size="18" font-weight="650" text-anchor="start" fill="#243247">统一证据：来源 / 位置 / 版本</text>
+<rect x="930" y="715" width="433" height="53" rx="5" fill="#ffffff" stroke="#9b7541" stroke-width="1.7"/>
+<rect x="930" y="715" width="5" height="53" fill="#9b7541"/>
+<text x="948" y="748.5" font-size="18" font-weight="650" text-anchor="start" fill="#243247">回答 · 图表 · Markdown / PDF · 历史</text>
+<polyline points="600,537 600,659 681,659 681,715" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1108,537 1108,658 681,658" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="430,742 516,742" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="846,742 930,742" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="48" y="812" font-size="15" font-weight="400" text-anchor="start" fill="#526276">实线：执行或数据流    虚线框：职责边界    原件读取受来源权限与文件版本约束</text>
+</g></svg>

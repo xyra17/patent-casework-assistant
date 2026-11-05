@@ -1,0 +1,22 @@
+{{- if .Values.persistence.enabled }}
+{{- range $name, $cfg := .Values.persistence }}
+{{- if and (ne $name "enabled") (not $cfg.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "patent-casework-assistant.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "patent-casework-assistant.labels" $ | nindent 4 }}
+spec:
+  accessModes:
+    - {{ $cfg.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ $cfg.size | default "5Gi" }}
+  {{- if $cfg.storageClass }}
+  storageClassName: {{ $cfg.storageClass | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
