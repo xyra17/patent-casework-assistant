@@ -23,6 +23,54 @@
 
 图中的执行路径共同保留来源编号、原文位置和版本。固定业务流程由程序编译受限参数并核验业务事实；开放任务由 Agent 规划工具调用、检查证据缺口并进行有界修正。图是实现概览，详细边界见[固定流程与 Agent 执行](docs/execution-boundaries.md)和[来源权限](docs/task-source-selection.md)。
 
+### 固定流程与 Agent 如何分工
+
+| 执行路径 | 谁决定下一步 | 适合的任务 |
+| --- | --- | --- |
+| 固定业务流程 | 程序将已支持的需求编译为受限参数，按既定规则查询、计算和核验 | 查指定案件信息、逐场会议、明确月份的收案与交局统计 |
+| Agent 会话任务 | DeepAgents 在允许的数据源和执行预算内，根据已取得的结果选择后续工具与查询 | 阅读附件后比较旧案、跨来源补查、整理报告 |
+
+任务模式或工具调用次数本身不能区分两条路径：固定流程也可能查询多个来源；Agent 也可能一步完成。路由会检查需求是否被固定契约完整覆盖，并在执行前检查所需数据源。数据源未开放或关键条件缺失时，系统会说明缺口或请求补充，不把缺失的事实写成已核实结论。
+
+### 一次会话如何返回结果
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant UI as Vue 工作台
+    participant API as FastAPI
+    participant Run as 后台任务
+    participant Data as 获准的数据源
+    participant Store as 会话 SQLite
+
+    User->>UI: 提交问题与数据源设置
+    UI->>API: 建立 WebSocket 连接
+    UI->>API: POST /api/task
+    API->>Store: 创建执行记录
+    API->>Run: 启动任务
+    API-->>UI: 返回 thread_id 与 execution_id
+    Run->>Run: 路由并选择固定流程或 Agent
+    Run->>Data: 执行受限查询或工具调用
+    Data-->>Run: 返回结果与来源证据
+    Run->>Run: 核验事实、引用与交付要求
+    Run->>Store: 保存事件、证据与结果
+    API-->>UI: WebSocket 推送进度与结果
+    UI-->>User: 展示回答、来源和执行状态
+```
+
+前端先连接 WebSocket，再提交任务；后台执行产生的事件会保存到应用 SQLite。连接中断后，前端可通过运行记录接口恢复执行状态。任务需要补充业务口径时，会停在澄清状态，收到用户回答后再启动一次执行。
+
+### 数据放在哪里
+
+| 数据 | 当前存储 | 用途 |
+| --- | --- | --- |
+| 会话、执行事件与证据 | 应用 SQLite | 恢复任务进度和查看结果来源 |
+| 案件目录、原件版本与正文分块 | 案件 SQLite 与本地文件 | 保留案号、原文位置和版本 |
+| 结构化业务记录 | MySQL | 查询案件信息、会议和统计所需字段 |
+| 公司文档知识库 | Chroma 与词法索引 | 检索单独导入的公司文档 |
+
+案卷检索与公司文档知识库分别建立索引，不能把两者视为同一套文档库。
+
 <details>
 <summary>展开：任务路由与核验图</summary>
 
