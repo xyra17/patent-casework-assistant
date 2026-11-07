@@ -29,6 +29,15 @@ class SubjectSupportTests(unittest.TestCase):
         self.assertFalse(assess('CAT','concatenate records')['supported'])
         self.assertTrue(assess('HNSW近邻索引','HNSW graph 近邻索引')['supported'])
 
+    def test_multi_action_paraphrase_uses_literal_source_support(self):
+        query='几个人同时讲话，会议纪要不能猜这句话是谁说的。找找会标明重叠发言、拿不准就不写姓名，还能回听的设计。'
+        body='聚类发言片段；标记重叠语音；低确定度时不指认姓名；返回可回听时间戳。'
+        review=assess(query,body)
+        self.assertTrue(review['supported'],review)
+        self.assertIn('重叠',review['matched_actions'])
+        self.assertIn('发言',review['matched_actions'])
+        self.assertFalse(assess(query,'会议发言登记了姓名，但没有其余设计。')['supported'])
+
 
 class SubjectSearchTests(unittest.TestCase):
     def setUp(self):

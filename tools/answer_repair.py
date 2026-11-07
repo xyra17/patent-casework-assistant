@@ -26,6 +26,28 @@ class AnswerEdits(BaseModel):
     edits: list[AnswerEdit] = Field(min_length=1, max_length=12)
 
 
+def remove_repeated_paragraphs(report: str) -> str:
+    """Remove only byte-identical substantial paragraphs copied into a revision.
+
+    The first occurrence, including its citations, remains untouched. Short
+    headings and table rows are intentionally outside this presentation guard.
+    """
+    parts = re.split(r'(\n\s*\n)', report)
+    seen = set()
+    kept = []
+    for index in range(0, len(parts), 2):
+        body = parts[index]
+        key = body.strip()
+        if len(key) >= 80 and key in seen:
+            continue
+        if len(key) >= 80:
+            seen.add(key)
+        if kept and index:
+            kept.append(parts[index - 1])
+        kept.append(body)
+    return ''.join(kept)
+
+
 def error_families(hard_issues, verification):
     counts = Counter(issue.split('：', 1)[0] for issue in hard_issues)
     for check in (verification or {}).get('checks', []):
@@ -79,6 +101,8 @@ def repair_plan(result, issues):
             spans += [m.span() for m in _CANDIDATE.finditer(report) if not _VALID.fullmatch(m[0])]
         elif issue.startswith('事实块缺失或被改写'):
             spans.append((len(report), len(report)))
+        elif issue.startswith('办理阶段与交局核实状态混淆'):
+            spans += [m.span() for m in re.finditer(r'(?m)^.*(?:未知状态|状态未知).*$' , report)]
         else:
             return None
     verification = result.get('verification') or {}
@@ -87,6 +111,15 @@ def repair_plan(result, issues):
             continue
         if check.get('action') in ('retrieve_evidence', 'clarify'):
             return None
+        # A reviewer may quote the entire introduction plus a table row even
+        # though only one cited row is wrong. Bind the repair to that row when
+        # the review names its incorrectly used source unambiguously.
+        wrong_source = re.search(r'所引\s*(S[1-9]\d*)', str(check.get('detail') or ''))
+        if wrong_source:
+            matching_rows = [m.span() for m in re.finditer(r'(?m)^\|[^\n]*\[' + wrong_source[1] + r'\][^\n]*$', report)]
+            if len(matching_rows) == 1:
+                spans.extend(matching_rows)
+                continue
         quote = check.get('answer_quote')
         if quote and report.count(quote) == 1:
             start = report.index(quote)
@@ -101,6 +134,9 @@ def repair_plan(result, issues):
     expanded = []
     for start, end in spans:
         if start == end == len(report):
+            expanded.append((start, end))
+            continue
+        if report[start:end].startswith('|') and report[start:end].rstrip().endswith('|'):
             expanded.append((start, end))
             continue
         while end > start and report[end - 1].isspace():

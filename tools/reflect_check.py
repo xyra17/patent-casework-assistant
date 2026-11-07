@@ -57,6 +57,32 @@ def hard_check(result: dict) -> list[str]:
     issues.extend(contract_issues(report, result.get('evidence', [])))
     issues.extend(workload_delivery_issues(result.get('query',''),result.get('evidence', [])))
 
+    query = result.get('query', '')
+    if re.search(r'(?:从|依据|根据|查|读|读取|核对).{0,16}申请文件', query):
+        from casework.parser import CASE_RE
+        requested = {m.group().upper() for m in CASE_RE.finditer(query)}
+        documents = [item for item in result.get('evidence', [])
+                     if item.get('type') in ('knowledge', 'file')
+                     and (not requested or requested & {m.group().upper() for m in CASE_RE.finditer(
+                         ' '.join(str(item.get(key) or '') for key in ('case_id', 'title', 'source', 'snippet')))} )
+                     and re.search(r'申请文件|申请文本|权利要求|说明书',
+                         ' '.join(str(item.get(key) or '') for key in ('title', 'source', 'snippet')))]
+        if not documents:
+            issues.append('申请文件正文未取得：原任务要求从申请文件说明实际步骤，须读取该案申请文件原文；只有案件信息或会议转述不能算完成')
+
+    if '未知状态' in query:
+        from casework.analytics import ACTIVE, INACTIVE
+        for item in result.get('evidence', []):
+            columns, rows = item.get('columns') or [], item.get('rows') or []
+            complete = item.get('completeness') or {}
+            if '案件状态' not in columns or not rows or complete.get('has_more') or complete.get('fetch_truncated'):
+                continue
+            stage_index = columns.index('案件状态')
+            unknown = sum(row[stage_index] not in ACTIVE | INACTIVE for row in rows)
+            if unknown == 0 and not re.search(r'办理阶段未知.{0,8}0\s*件', report):
+                issues.append('办理阶段与交局核实状态混淆：来源中办理阶段均已登记；须明确办理阶段未知为0件，实际交局未核实另列，不能把未核实交局称作案件状态未知')
+            break
+
     from casework.requirements import case_mechanism_judgment_requested
     from casework.parser import CASE_RE
     if case_mechanism_judgment_requested(result.get('query', '')):

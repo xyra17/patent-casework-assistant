@@ -166,7 +166,7 @@ def _explicitly_forbidden_sources(query: str) -> set[str]:
     for selection in re.findall(r"(?:只|仅)(?:使用|用|查|查询|检索|基于|依据|根据|读取)?\s*([^。；;，,\n]+)", text):
         selected = set()
         if re.search(r'数据库|业务库|案件信息|sql', selection): selected.add('db_query')
-        if re.search(r'知识库|内部文档', selection): selected.add('knowledge')
+        if re.search(r'知识库|内部文档|内部.{0,16}(?:文件|材料|原件)|申请文件|交底书|案件档案', selection): selected.add('knowledge')
         if re.search(r'网络|联网|互联网', selection): selected.add('web_search')
         attachment = re.search(r'上传|附件|本次文件|这些文件', selection)
         if selected or attachment:
@@ -187,7 +187,13 @@ def _explicitly_forbidden_sources(query: str) -> set[str]:
 def _normalize_plan(plan: TaskPlan, query: str, uploads: list[str] | None = None) -> TaskPlan:
     """用用户显式约束修正规划器输出，并保证字段自洽。"""
     req_report, req_pdf = classify_request(query)
-    forbidden = _explicitly_forbidden_sources(query) | set(plan.forbidden_sources) | task_sources.blocked_sources()
+    explicit_forbidden = _explicitly_forbidden_sources(query)
+    # A planner's inferred exclusion cannot veto a document explicitly requested
+    # in the user's task. An explicit user exclusion still has priority.
+    explicit_required = set()
+    if re.search(r'(?:从|依据|根据|查|读|读取|核对).{0,16}(?:申请文件|交底书|案件档案|内部文件)', query):
+        explicit_required.add('knowledge')
+    forbidden = explicit_forbidden | (set(plan.forbidden_sources) - explicit_required) | task_sources.blocked_sources()
     # A user may select an uploaded disclosure by its case number rather than
     # saying “附件”. Explicit exclusive selection must still close other tools.
     for selection in re.findall(r'(?:只|仅)(?:使用|查|依据|基于|看|读|读取)?([^。；;，,\n]+)', query):
@@ -199,7 +205,7 @@ def _normalize_plan(plan: TaskPlan, query: str, uploads: list[str] | None = None
             forbidden.update(source_policy.SOURCES)
     pdf_forbidden = _pdf_explicitly_forbidden(query)
 
-    sources = [source for source in dict.fromkeys(plan.required_sources) if source not in forbidden]
+    sources = [source for source in dict.fromkeys([*plan.required_sources, *sorted(explicit_required)]) if source not in forbidden]
     blocked_request = set(plan.required_sources) & task_sources.blocked_sources()
     assumptions = [item for item in plan.assumptions if item][:4]
     if blocked_request:
@@ -209,7 +215,7 @@ def _normalize_plan(plan: TaskPlan, query: str, uploads: list[str] | None = None
     require_report = bool(
         plan.require_report or req_report or require_pdf or plan.task_type == "report"
     )
-    if re.search(r'(?:不要|无需|不需要|禁止|不用)(?:生成|创建|输出|导出|提供)?(?:任何)?(?:文件|报告)', query):
+    if re.search(r'(?:不要|无需|不需要|禁止|不用|不)(?:生成|创建|输出|导出|提供)(?:任何)?(?:文件|报告)', query):
         require_report = require_pdf = False
     if require_pdf:
         require_report = True
@@ -827,6 +833,9 @@ def build_correction_prompt(
     if any('直接引文与所引片段不匹配' in issue for issue in hard_issues):
         parts.append('- 引文修正：从所引S编号的实际片段逐字复制；拼接、改写内容不得放在引号或引用块内冒充原句。'
                      '也可改用有准确来源的转述。只保留回答原问题必需的内容，不为修正无关展开反复读取全文。')
+    if any('原文引句缺少可定位证据' in issue or '证据选择标记未能解析' in issue for issue in hard_issues):
+        parts.append('- 引文修正：删除未绑定的 > 引用块和占位选择标记；用简短转述加真实[S编号]及页段位置回答。'
+                     '不要自行编写 {{quote:...}}、{{facts:...}} 或示例 Q1/Q2。')
     if not parts:
         return query
     return f"{query}\n\n【上一轮结果未通过校验，请修正后重新生成】\n" + "\n".join(parts)
@@ -1174,9 +1183,26 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         # 模型只提取声明，程序按执行时固定的定义和单元格核对。
         from api import storage
         from tools.answer_contracts import render_answer
-        result['report'], result['answer_render_audit'] = render_answer(result['report'], result.get('evidence', []), result.get('query',''))
         from tools.evidence_refs import normalize_citations
-        result['report']=normalize_citations(result['report'],result.get('evidence',[]))
+        raw_report = result['report']
+        result['report']=normalize_citations(raw_report,result.get('evidence',[]))
+        # Citation repair may add a second [S] marker inside a host-rendered
+        # immutable fact block. Restore its exact bytes before checking whether
+        # it is already present; otherwise the renderer appends another copy.
+        from tools.answer_contracts import fact_block
+        for item in result.get('evidence', []):
+            if not item.get('answer_contract'):
+                continue
+            try:
+                block = fact_block(item)
+            except ValueError:
+                continue
+            if block and block in raw_report:
+                result['report'] = result['report'].replace(
+                    normalize_citations(block, result.get('evidence', [])), block)
+        from tools.answer_repair import remove_repeated_paragraphs
+        result['report']=remove_repeated_paragraphs(result['report'])
+        result['report'], result['answer_render_audit'] = render_answer(result['report'], result.get('evidence', []), result.get('query',''))
         if not require_pdf:
             try:
                 _sync_report_files(result,session_dir)

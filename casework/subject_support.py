@@ -9,7 +9,7 @@ import re
 import unicodedata
 from functools import lru_cache
 
-VERSION = 'subject-support-3'
+VERSION = 'subject-support-4'
 # Request/output scaffolding, never a domain allowlist or a list of test terms.
 SCAFFOLD = frozenset('问题 方案 方法 技术 材料 资料 案件 案子 新案 设计 步骤 结果 内容 信息 系统 实验 条件 参数 说明 文档 流程 结构 处理 版本 范围 要求 场景 对象 方式 部分 地方 时候 时间 当时 前提 标明 原文 正文 表里 答案 结论 经验 历史 同事 同一个 这种 那种 本次 类型 过程 方面 情况 例子 参考 文字 产生'.split())
 ENGLISH_SCAFFOLD = frozenset('a an the is are how what which find show for with of in on to and or method design system'.split())
@@ -74,6 +74,21 @@ def assess(query, text):
     result['anchor_supported'] = all(contains(body, word) for word in anchors)
     acronyms = [w.casefold() for w in re.findall(r'(?<![A-Za-z0-9])[A-Z][A-Z0-9_-]{2,}(?![A-Za-z0-9])', query)]
     result['missing_acronyms'] = [w for w in acronyms if not contains(body, w)]
-    result['supported'] &= result['anchor_supported'] and not result['missing_acronyms']
+    # Noun extraction can miss a mechanism expressed as actions. Admit a
+    # paraphrased question only when its original wording has multiple distinct
+    # action words literally present in the published source. This never
+    # overrides a missing leading object, explicit target, or acronym.
+    import jieba.posseg
+    action_terms = []
+    generic_actions = {'查询', '检索', '查找', '搜索', '看看', '找到', '使用', '进行', '提供', '说明', '设计', '处理', '生成', '相关'}
+    for token in jieba.posseg.cut(unicodedata.normalize('NFKC', query), HMM=False):
+        word = token.word.casefold()
+        if token.flag.startswith('v') and len(word) >= 2 and word not in generic_actions and word not in action_terms:
+            action_terms.append(word)
+    matched_actions = [word for word in action_terms if contains(body, word)]
+    result['action_terms'] = action_terms
+    result['matched_actions'] = matched_actions
+    result['action_supported'] = bool(result['matched']) and len(matched_actions) >= 2
+    result['supported'] = (result['supported'] or result['action_supported']) and result['anchor_supported'] and not result['missing_acronyms']
     result['status'] = 'checked' if terms else 'not_required'
     return result
