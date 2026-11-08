@@ -86,6 +86,25 @@ class BusinessScenarioRepairs(TestCase):
         self.assertEqual(normalize_citations(report,ambiguous),report)
         self.assertTrue(citation_issues('原件 `archive/case.pdf`（说明书[0001]–[0010]）',ambiguous))
 
+    def test_patent_paragraphs_accept_only_preserved_explicit_sources(self):
+        from tools.evidence_refs import normalize_citations,citation_issues
+        sources=[{'id':'S18','type':'knowledge','title':'archive/case.pdf','snippet':'[0004] 第一步。'},
+                 {'id':'S20','type':'knowledge','title':'archive/case.pdf','snippet':'[0009] 第六步。'}]
+        report='《case.pdf》（说明书[0004]–[0009]）\n| 第一步 | 第3页 [0004]（S18） |\n| 第六步 | 第3页 [0009]（S20） |'
+        normalized=normalize_citations(report,sources)
+        self.assertIn('[0004][S18]',normalized)
+        self.assertFalse(citation_issues(normalized,sources))
+        self.assertTrue(citation_issues('说明书[0004]–[0009]',sources))
+        self.assertTrue(citation_issues('第3页 [0004]（S99）',sources))
+
+    def test_meeting_todo_does_not_erase_documented_counterexample(self):
+        from tools.content_verification import unsupported_reasoning_issues
+        sources=[{'id':'S26','type':'knowledge','casework':True,'case_id':'AI-2026-024',
+                  'snippet':'本材料的关键反例为：权限拒绝被无限重试。'}]
+        query='比较两案会议待补材料和关键反例'
+        self.assertTrue(unsupported_reasoning_issues('两案反例尚未成文。',sources,query))
+        self.assertFalse(unsupported_reasoning_issues('会议登记仍要求把反例写入边界说明；申请文件已写有关键反例。',sources,query))
+
     def test_monthly_table_uses_row_and_nearest_heading_time(self):
         month_source={'id':'S1','type':'database','columns':['received_count'],'rows':[[10]],
                       'statistics':{'metrics':[{'column':'received_count','index':0,'label':'实际收案数量',

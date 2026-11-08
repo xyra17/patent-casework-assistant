@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
 from typing import Literal
 
@@ -77,22 +78,61 @@ def _add(title,columns,rows,*,statistics=None,details=None,has_more=False,answer
     return evidence.add(context.get_thread_id(),item)
 
 
-def _metric_contract(metric,index,time,dimensions,filters=None):
-    labels={'received_count':('实际收案数量',['实际接收数量','新收案件数量','收案数量']),
-            'filed_count':('实际交局数量',['实际完成数量','交局数量','已核实实际交局数量','已核实交局数量','已核实实际交局']),
-            'active_count':('在办案件数量',['在办案件数']),
+def _metric_contract(metric,index,time,dimensions,filters=None,unit='件'):
+    labels={'received_count':('实际收案数量',['实际接收数量','新收案件数量','收案数量','实际收案']),
+            'filed_count':('实际交局数量',['实际完成数量','交局数量','已核实实际交局数量','已核实交局数量','已核实实际交局','实际交局']),
+            'active_count':('在办案件数量',['在办案件数','在办案件','在办数量']),
             'near_count':('临近期限案件数量',['临近到期案件数量']),
             'overdue_count':('逾期案件数量',['逾期案件数'])}
     labels.update({'history_match_count':('相关历史案件数量',['相关历史案件数']), 'unknown_stage_count':('状态未知案件数量',[])})
     labels.update({'received_change_count':('实际收案数量变化',[]), 'filed_change_count':('实际交局数量变化',[])})
+    labels.update({'received_change_pct':('实际收案数量变化百分比',['收案数量变化百分比','实际收案增减百分比','收案环比变化百分比']),
+                   'filed_change_pct':('实际交局数量变化百分比',['交局数量变化百分比','实际交局增减百分比','交局环比变化百分比'])})
+    labels.update({'received_total_count':('实际收案数量合计',['收案数量合计','实际收案合计','区间实际收案数量']),
+                   'filed_total_count':('实际交局数量合计',['交局数量合计','实际交局合计','区间实际交局数量'])})
+    labels.update({'unknown_received_count':('实际收案日期未核实',['实际收案日期未核实数量']),
+                   'unknown_filed_count':('实际交局日期或核实依据未核实',['实际交局日期未核实','实际交局核实依据未核实'])})
+    labels['missing_received_count']=('实际收案日期缺失数量',['实际收案日期缺失'])
     labels.update({'total_count':('案件总数',[])})
-    labels['matched_case_count']=('筛选案件数量',[])
+    labels['matched_case_count']=('筛选案件数量',['筛选案件数','筛选后案件数量','同一筛选范围案件数量','案件数量','清单案件数量'])
     for prefix,word in [('near','临近期限'),('overdue','逾期'),('unknown','期限未知')]:
         for field,label in [('draft','初稿'),('client','客户送审'),('filing','向局提交')]:
             labels[prefix+'_'+field+'_count']=(label+word+'案件数量',[])
     label,aliases=labels[metric]
     return {'column':metric,'index':index,'label':label,'names':[label,*aliases],
-            'unit':'件','definition_verified':True,'time':time,'filters':filters or []}
+            'unit':unit,'definition_verified':True,'time':time,'filters':filters or []}
+
+
+def _missing_received_cases(unknown_cases):
+    """A conflicting date is unknown, but not an absent original value."""
+    return [case['case_id'] for case in unknown_cases
+            if 'received_date' in case and not case['received_date']
+            and 'received_date' not in (case.get('conflict_fields') or [])]
+
+
+def _monthly_event_rows(report):
+    """Use the same snapshot's counted event identities and actual dates."""
+    by_key = {case['case_key']: case for case in report['cases']}
+    rows = []
+    seen = set()
+    for group in report['rows']:
+        for key, field, label in [('received','received_date','实际收案'),
+                                  ('filed','actual_filed_date','已核实实际交局')]:
+            identities = group[key+'_case_keys']
+            if len(identities) != group[key+'_count']:
+                raise ValueError('月度事件数量与明细身份不一致')
+            for ident in identities:
+                case = by_key[ident]
+                actual = case.get(field)
+                if (not actual or actual[:7] != group['month']
+                        or key == 'filed' and not case.get('filing_verified')):
+                    raise ValueError('月度事件日期或交局核实依据不一致')
+                identity = (group['month'], label, ident)
+                if identity in seen:
+                    raise ValueError('月度事件身份重复')
+                seen.add(identity)
+                rows.append([group['month'], label, case['case_id'], actual])
+    return rows
 
 
 def _query_contract(params):
@@ -128,7 +168,7 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                            due_statuses:list[Literal['overdue','next14','unknown']]|None=None,
                            missing_date_field:Literal['received_date','actual_filed_date']|None=None,
                            start_month:str|None=None,end_month:str|None=None,case_key:str|None=None,
-                           compare_months:bool=False,include_count:bool=False,
+                           compare_months:bool=False,include_count:bool=False,complete:bool=False,
                            clients:list[str]|None=None,
                            recommendation_mode:Literal['technical','workload_rank']='technical',
                            offset:int=0,limit:int=30)->str:
@@ -223,9 +263,16 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
             result['evidence_id']=_add('当前完整发布快照的案件计数',[m['label'] for m in contract['metrics']],
                                       [[result[k] for k in keys]],statistics=contract)
         elif operation=='cases':
-            result=analytics.cases_page(query=query,owner=owner,domain=domain,stage=stage,client=client,due_field=due_field,due_status=due_status,due_statuses=due_statuses,missing_date_field=missing_date_field,as_of=as_of,offset=offset,limit=limit)
+            reader=analytics.complete_cases_page if complete else analytics.cases_page
+            paging={} if complete else {'offset':offset,'limit':limit}
+            result=reader(query=query,owner=owner,domain=domain,stage=stage,client=client,due_field=due_field,due_status=due_status,due_statuses=due_statuses,missing_date_field=missing_date_field,as_of=as_of,**paging)
             columns=['所编号','客户案号','发明名称','代理师','技术领域','案件状态','实际收案日期','初稿期限／所限','客户送审期限','向局提交期限','实际交局日期','交局已核实']
             keys=['case_id','client_case_id','title','owner_name','technical_domain','stage','received_date','draft_due_date','client_review_due_date','filing_due_date','actual_filed_date','filing_verified']
+            # Client identity must also be present in the cited evidence, not
+            # only in the private query row used by the renderer.
+            columns.append('客户简称')
+            keys.append('client_alias')
+            case_columns=list(columns)
             due_contract = None
             if (due_field and due_status in ('overdue','next14','unknown') and not result['has_more']
                     and offset == 0 and len(result['rows']) == result['total']):
@@ -242,12 +289,25 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
             sid=_add('部门案件信息（当前已同步数据）',columns,[[r.get(k) for k in keys] for r in result['rows']],
                      details=result['filters'],has_more=result['has_more'],answer_contract=due_contract)
             result['evidence_id']=sid
+            if due_contract:
+                from tools.answer_contracts import fact_block
+                bound=next((e for e in evidence.snapshot(context.get_thread_id())
+                            if e.get('id')==sid and e.get('answer_contract')==due_contract),None)
+                if bound:result['answer_markdown']=fact_block(bound)
             if include_count:
-                result['count_evidence_id']=_add('同一筛选范围的案件总量',['筛选案件数量'],[[result['total']]],details=result['filters'],
-                statistics={'version':1,'metrics':[_metric_contract('matched_case_count',0,{'status':'unbounded'},[],
-                    [{'field':k,'value':v} for k,v in result['filters'].items() if v not in (None,'',[])])],'dimensions':[]})
+                # The filtered total and how many of those cases are still in
+                # progress answer two different questions; both stay checkable.
+                filters=[{'field':k,'value':v} for k,v in result['filters'].items() if v not in (None,'',[])]
+                columns,values=['筛选案件数量'],[[result['total']]]
+                metrics=[_metric_contract('matched_case_count',0,{'status':'unbounded'},[],filters)]
+                if not result['has_more'] and len(result['rows'])==result['total']:
+                    values[0].append(sum(analytics.active(r,analytics.as_date(as_of)) for r in result['rows']))
+                    columns.append('在办案件数量')
+                    metrics.append(_metric_contract('active_count',1,{'status':'as_of'},[],filters))
+                result['count_evidence_id']=_add('同一筛选范围的案件总量',columns,values,details=result['filters'],
+                statistics={'version':1,'metrics':metrics,'dimensions':[]})
             if set(due_statuses or [due_status]) & {'overdue','next14'}:
-                missing=analytics.cases_page(query=query,owner=owner,domain=domain,stage=stage,client=client,due_field=due_field,due_status='unknown',as_of=as_of,limit=200)
+                missing=analytics.complete_cases_page(query=query,owner=owner,domain=domain,stage=stage,client=client,due_field=due_field,due_status='unknown',as_of=as_of)
                 result['unknown_due_cases']=[r for r in missing['rows'] if analytics.active(r,analytics.as_date(as_of))]
                 result['unknown_due_has_more']=missing['has_more']
                 unknown_contract=None
@@ -257,8 +317,14 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                         'complete_snapshot':True,'group_proofs':missing['due_group_proofs'],
                         'scope':'当前完整发布快照中已知在办案件；已核实交局及非在办阶段排除',
                         'unknown_definition':'所选期限字段为空或冲突（归一值为null）'}
-                result['unknown_due_evidence_id']=_add('所选期限未知或冲突的已知在办案件',columns,[[r.get(k) for k in keys] for r in result['unknown_due_cases']],
+                result['unknown_due_evidence_id']=_add('所选期限未知或冲突的已知在办案件',case_columns,[[r.get(k) for k in keys] for r in result['unknown_due_cases']],
                     details=missing['filters'],has_more=missing['has_more'],answer_contract=unknown_contract)
+                if unknown_contract:
+                    from tools.answer_contracts import fact_block
+                    bound=next((e for e in evidence.snapshot(context.get_thread_id())
+                                if e.get('id')==result['unknown_due_evidence_id']
+                                and e.get('answer_contract')==unknown_contract),None)
+                    if bound:result['unknown_due_answer_markdown']=fact_block(bound)
             for row in result['rows']:
                 snapshot=store.get_case(row['case_key'])
                 row['field_states']={k:f['state'] for k,f in snapshot['fields'].items() if f['state'] in ('conflict','confirmation_stale')}
@@ -270,7 +336,7 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                          for field,candidates in row['conflicting_candidates'].items() for c in candidates])
                 if parser.CASE_RE.fullmatch(query.strip()) and len(result['rows'])==1:
                     source_rows=[]
-                    for field in ('draft_due_date','client_review_due_date','filing_due_date','actual_filed_date','filing_confirmed'):
+                    for field in ('owner_name','client_alias','title','stage','received_date','draft_due_date','client_review_due_date','filing_due_date','actual_filed_date','filing_confirmed'):
                         entry=snapshot['fields'].get(field) or {}
                         label=parser.FIELDS.get(field,(field,))[0]
                         for candidate in entry.get('candidates') or []:
@@ -293,7 +359,9 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
             result['note']='total用于分页；仅include_count=true时返回数量证据，未要求数量时不要额外附加计数。未知和冲突保持为空，case_key供后续定位。'
             if include_count:
                 scope='；'.join(str(v) for v in result['filters'].values() if v not in (None,'',[])) or '当前接入资料'
-                result['count_answer_markdown']='筛选范围：'+scope+'。\n| 筛选案件数量（件） | 来源 |\n| --- | --- |\n| '+str(result['total'])+f" | [{result['count_evidence_id']}] |"
+                cells=' | '.join(str(v) for v in values[0])
+                heads=' | '.join(c+'（件）' for c in columns)
+                result['count_answer_markdown']='筛选范围：'+scope+'。\n| '+heads+' | 来源 |\n|'+' --- |'*(len(columns)+1)+'\n| '+cells+f" | [{result['count_evidence_id']}] |"
         elif operation=='meetings':
             if client and clients:raise ValueError('单客户和多客户筛选不能并存')
             records=catalog.meetings(client=client,ipr=ipr,case_key=case_key)
@@ -322,17 +390,49 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                     ids.append(sid)
                     total_contract={'version':1,'metrics':[_metric_contract(metric,0,time,[],filters)],'dimensions':[]}
                     total[label+'_evidence_id']=_add(f"{start.year}年{start.month}月{label}合计",[label],[[total[metric]]],statistics=total_contract)
-            lines=['| 月份 | 实际收案数量（件） | 实际交局数量（件） |','| --- | --- | --- |']
+            range_totals={}
+            if len(result['totals'])>1:
+                # A multi-month request is answered with a sum as well as per-month
+                # values. The sum is program-owned so the answer never has to add up.
+                range_start=analytics.month_bounds(result['totals'][0]['month'])[0]
+                range_end=analytics.month_bounds(result['totals'][-1]['month'])[1]
+                for metric,label,field,value in [
+                        ('received_total_count','实际收案数量合计','received_date',sum(t['received_count'] for t in result['totals'])),
+                        ('filed_total_count','实际交局数量合计','actual_filed_date',sum(t['filed_count'] for t in result['totals']))]:
+                    time={'status':'bounded','start':range_start.isoformat(),'end':range_end.isoformat(),'field':field}
+                    contract={'version':1,'metrics':[_metric_contract(metric,0,time,[],filters)],'dimensions':[]}
+                    range_totals[metric]=(label,value,_add(start_month+'至'+end_month+label,[label],[[value]],statistics=contract))
+            lines=[('统计范围：客户＝'+client+'；所有办理阶段；按实际发生日期归月。') if client
+                   else '统计范围：当前接入的全部客户，所有办理阶段；按实际发生日期归月。',
+                   '| 月份 | 实际收案数量（件） | 实际交局数量（件） |','| --- | --- | --- |']
             for total in result['totals']:
                 year,month=total['month'].split('-')
                 lines.append(f"| {year}年{int(month)}月 | {total['received_count']} [{total['实际收案数量_evidence_id']}] | {total['filed_count']} [{total['实际交局数量_evidence_id']}] |")
             lines.append('')
+            if range_totals:
+                lines.append('区间合计（'+range_start.isoformat()+'至'+range_end.isoformat()+'，不含末日）：'
+                    +'，'.join(f"{label}{value}件 [{sid}]" for label,value,sid in range_totals.values())+'。')
+                result['range_total_evidence_ids']={metric:sid for metric,(_,_,sid) in range_totals.items()}
             if result['unknown_received'] or result['unknown_filed']:
                 lines.append('未核实日期不计入对应指标的月份；另一项实际日期已核实的，仍可计入其对应指标。')
             result['answer_markdown']='\n'.join(lines)
             result['evidence_ids']=ids
+            event_rows = _monthly_event_rows(result)
+            result['case_event_details'] = event_rows
+            result['case_event_details_evidence_id'] = _add('逐月实际发生事件的案号与日期',
+                ['月份','事件指标','所编号','实际日期'], event_rows,
+                details={'client':client,'start_month':start_month,'end_month':end_month})
+            from api import storage
+            run = storage.get_run(context.get_thread_id()) if context.get_thread_id() else None
+            task = (run or {}).get('query', '')
+            if re.search(r'案号|明细|清单', task) and re.search(r'实际日期|对应.*日期|日期', task):
+                sid = result['case_event_details_evidence_id']
+                result['answer_markdown'] += '\n\n| 月份 | 事件指标 | 所编号 | 实际日期 | 来源 |\n| --- | --- | --- | --- | --- |'
+                for row in event_rows:
+                    result['answer_markdown'] += '\n| ' + ' | '.join(str(value) for value in row) + f' | [{sid}] |'
             result.pop('cases',None)
             result['coverage']={k:result['coverage'][k] for k in ('complete_scan','scope_note','data_kind')}
+            missing_received = _missing_received_cases(result['unknown_received'])
             result['unknown_received']=[{'case_id':c['case_id'],'reason':'实际收案日期缺失或冲突，月份未知'} for c in result['unknown_received']]
             result['unknown_filed']=[{'case_id':c['case_id'],'reason':'实际交局日期缺失、冲突或核实依据不足，月份未知（不等于已发生交局或办理异常）'} for c in result['unknown_filed']]
             result['unknown_evidence_id']=_add('实际发生日期未核实清单（不归入任一月份）',
@@ -345,6 +445,22 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                         'complete':not bool(result['duplicate_case_ids_excluded']),
                         'excluded_duplicate_ids':result['duplicate_case_ids_excluded'],
                         'scope':'当前接入案件，排除待核对的重复案号；未知日期不分配到月份'}
+            result['unknown_count_evidence_id']=_add('实际发生日期未核实数量（当前接入范围、所有办理阶段、不归月）',
+                ['实际收案日期未核实','实际交局日期或核实依据未核实'],
+                [[len(result['unknown_received']),len(result['unknown_filed'])]],
+                statistics={'version':1,'metrics':[
+                    _metric_contract('unknown_received_count',0,{'status':'unbounded'},[],filters),
+                    _metric_contract('unknown_filed_count',1,{'status':'unbounded'},[],filters)],'dimensions':[]})
+            result['missing_received_case_ids'] = missing_received
+            result['missing_received_count_evidence_id'] = _add(
+                '实际收案日期缺失数量（不含日期冲突，所有办理阶段，不归月）',
+                ['实际收案日期缺失数量'], [[len(missing_received)]],
+                details={'client':client, 'case_ids':missing_received, 'excludes':'日期冲突'},
+                statistics={'version':1,'dimensions':[],'metrics':[
+                    _metric_contract('missing_received_count',0,{'status':'unbounded'},[],filters)]})
+            if '收案日期缺失' in task:
+                sid = result['missing_received_count_evidence_id']
+                result['answer_markdown'] += '\n实际收案日期缺失数量'+str(len(missing_received))+'件（不含日期冲突，所有办理阶段，不归月）：'+('、'.join(missing_received) or '无符合记录')+f' [{sid}]。'
             result['date_completeness']={}
             for key,field,label in [('unknown_received','received_date','实际收案日期'),
                                     ('unknown_filed','actual_filed_date','实际交局日期或核实依据')]:
@@ -354,7 +470,7 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                          ['所编号','缺口'],[[r['case_id'],r['reason']] for r in rows],
                          date_completeness=contract)
                 result['date_completeness'][key]={**contract,'evidence_id':sid}
-                result['answer_markdown']+=f"\n{label}未核实共{len(rows)}件（当前接入范围、所有办理阶段、不归月）："+('、'.join(r['case_id'] for r in rows) or '无符合记录')+f"。[{sid}]"
+                result['answer_markdown']+=f"\n{label}未核实共计{len(rows)}件（当前接入范围、所有办理阶段、不归月）："+('、'.join(r['case_id'] for r in rows) or '无符合记录')+f" [{sid}][{result['unknown_count_evidence_id']}]。"
             result['answer_markdown']+='\n交局日期或依据未核实包含尚在办、尚未交局的正常记录，不直接等于日期异常、漏办或已发生交局。'
             if missing_date_field:
                 label={'received_date':'实际收案日期','actual_filed_date':'实际交局日期或核实依据'}[missing_date_field]
@@ -386,7 +502,8 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                     cell=lambda v:str(v).replace('|','\\|').replace('\n',' ')
                     result['answer_markdown']+='\n| '+' | '.join(cell(v) for v in (ident,label,nature,value,path,location))+f" [{result['date_conflict_evidence_id']}] |"
             if not conflicts:
-                result['answer_markdown']+='\n日期冲突：当前接入范围未查到日期冲突候选。'+f"[{result['date_conflict_evidence_id']}]"
+                scope_note=(f'客户＝{client}；' if client else '')+'当前接入范围、所有办理阶段、不归月'
+                result['answer_markdown']+=f"\n日期冲突：{scope_note}未查到日期冲突候选。"+f"[{result['date_conflict_evidence_id']}]"
             chronology=result['chronology_conflicts']
             chrono_contract={**completeness('chronology_conflicts',len(chronology)),
                 'definition':'仅比较收案及已核实交局日期均可确定的案件，检查实际交局早于实际收案；未知日期不能证明先后顺序正常'}
@@ -402,9 +519,15 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                 lines=['','## 月份变化','| 月份比较及两月覆盖区间 | 实际收案数量变化（件） | 实际交局数量变化（件） |','| --- | --- | --- |']
                 summaries=[]
                 for previous,current in zip(result['totals'],result['totals'][1:]):
+                    def change_pct(now,before):
+                        # A zero base has no percentage. The absolute change stays
+                        # available so the answer never divides by zero.
+                        return None if not before else round((now-before)/before*100,1)
                     item={'previous_month':previous['month'],'month':current['month'],
                           'received_change_count':current['received_count']-previous['received_count'],
-                          'filed_change_count':current['filed_count']-previous['filed_count']}
+                          'filed_change_count':current['filed_count']-previous['filed_count'],
+                          'received_change_pct':change_pct(current['received_count'],previous['received_count']),
+                          'filed_change_pct':change_pct(current['filed_count'],previous['filed_count'])}
                     time={'status':'bounded','start':analytics.month_bounds(previous['month'])[0].isoformat(),
                           'end':analytics.month_bounds(current['month'])[1].isoformat(),'field':'month_comparison'}
                     metrics=[_metric_contract(m,i,time,[]) for i,m in enumerate(('received_change_count','filed_change_count'))]
@@ -414,18 +537,41 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                         details={'calculation':'当月实际数量减前月实际数量','input_evidence_ids':[
                             previous['实际收案数量_evidence_id'],current['实际收案数量_evidence_id'],
                             previous['实际交局数量_evidence_id'],current['实际交局数量_evidence_id']]})
+                    pct_columns=[];pct_row=[]
+                    pct_metrics=[]
+                    for metric in ('received_change_pct','filed_change_pct'):
+                        if item[metric] is None:continue
+                        pct_metrics.append(_metric_contract(metric,len(pct_row),time,[],unit='%'))
+                        pct_columns.append(pct_metrics[-1]['label']);pct_row.append(item[metric])
+                    if pct_row:
+                        item['pct_evidence_id']=_add(current['month']+'相比'+previous['month']+'实际案量变化百分比',
+                            pct_columns,[pct_row],statistics={'version':1,'metrics':pct_metrics,'dimensions':[]},
+                            details={'calculation':'(当月实际数量减前月实际数量)/前月实际数量×100，保留一位小数；前月为0时不计算百分比','input_evidence_ids':[item['evidence_id']]})
+                    else:
+                        item['pct_evidence_id']=None
                     result['comparisons'].append(item)
                     month_label=lambda value:value[:4]+'年'+str(int(value[5:]))+'月'
                     lines.append(f"| {month_label(current['month'])} 相比 {month_label(previous['month'])}；[{time['start']}，{time['end']}) | {item['received_change_count']} [{item['evidence_id']}] | {item['filed_change_count']} [{item['evidence_id']}] |")
                     change=lambda n:'减少' if n<0 else '增加' if n>0 else '持平'
-                    summaries.append(f"{month_label(current['month'])} 的实际收案数量{change(item['received_change_count'])}，实际交局数量{change(item['filed_change_count'])}。[{item['evidence_id']}]")
+                    summary=f"{month_label(current['month'])} 的实际收案数量{change(item['received_change_count'])}，实际交局数量{change(item['filed_change_count'])}。[{item['evidence_id']}]"
+                    percentages=[]
+                    for metric,label in (('received_change_pct','实际收案数量变化百分比'),('filed_change_pct','实际交局数量变化百分比')):
+                        if item[metric] is None:
+                            percentages.append(label+'：前月为0，不计算百分比（绝对变化见上）')
+                        else:
+                            percentages.append(f"{label}{item[metric]:g}% [{item['pct_evidence_id']}]")
+                    summaries.append(summary)
+                    # A percentage needs its own two-month scope so the program can
+                    # verify the comparison without inference.
+                    summaries.append(f"{month_label(current['month'])}相比{month_label(previous['month'])}："
+                                     +'，'.join(percentages)+'。')
                 lines.extend(['',*summaries])
                 lines.append('变化仅反映当前已登记并核实的案量，不等同于实际工时、人员忙闲或办理效率。')
                 result['answer_markdown']+='\n'+'\n'.join(lines)
             body=result['answer_markdown']
             sid=_add('月度业务统计完整交付',[],[],details={'input_evidence_ids':result['evidence_ids']},
                      answer_contract={'version':1,'kind':'monthly_report','body':body,
-                                      'start_month':start_month,'end_month':end_month})
+                                      'start_month':start_month,'end_month':end_month,'client':client})
             from tools.answer_contracts import fact_token
             persisted=next((e for e in evidence.snapshot(context.get_thread_id()) if e['id']==sid),None)
             if persisted:result['answer_token']=fact_token(persisted)

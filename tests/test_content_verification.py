@@ -335,3 +335,43 @@ class ContentVerificationTests(unittest.TestCase):
         model.assert_not_called()
         self.assertEqual(result['verification']['mode'], 'program_contract')
         self.assertEqual(result['verification']['checks'], [])
+
+
+class MeetingAbsenceTests(unittest.TestCase):
+    """Absence from a meeting register needs the actual evidence id."""
+
+    def setUp(self):
+        self.sources=[{'casework':True,'type':'knowledge','id':'S3','snippet':'会议记录：围绕端点检测核对'}]
+
+    def test_absence_without_source_is_rejected(self):
+        from tools.content_verification import archive_absence_issues
+        self.assertTrue(archive_absence_issues('“关键反例”在两案会议资料中均无登记，属于资料缺口。',self.sources))
+        self.assertTrue(archive_absence_issues('申请文件中没有该步骤。',self.sources))
+
+    def test_absence_with_source_or_explicit_scope_passes(self):
+        from tools.content_verification import archive_absence_issues
+        for text in ('“关键反例”在两案会议资料中均无登记。[S3]',
+                     '会议记录中未登记待补材料。[S3]\n\n其余无。',
+                     '在本次已取得的会议记录中未见该反例。'):
+            with self.subTest(text=text):
+                self.assertFalse(archive_absence_issues(text,self.sources))
+
+
+class QuotedAndCoverageGapTests(unittest.TestCase):
+    """A quotation or a stated coverage gap is not an unsupported absence claim."""
+
+    def setUp(self):
+        self.sources=[{'casework':True,'type':'knowledge','id':'S3','snippet':'会议记录：围绕端点检测核对'}]
+
+    def test_quoted_source_text_is_not_rejected(self):
+        from tools.content_verification import archive_absence_issues
+        for text in ('该案档案注明为 AI 生成材料—"不是公开申请文件，没有真实申请号、公开号。"',
+                     '该申请文件首页自述为 AI 生成材料：“不是公开申请文件，没有真实申请号。'):
+            with self.subTest(text=text):
+                self.assertFalse(archive_absence_issues(text,self.sources))
+
+    def test_stated_coverage_gap_is_not_rejected(self):
+        from tools.content_verification import archive_absence_issues
+        text=('会议资料“待补示例／边界样本”尚未取得原文：三方会议表已定位，'
+              '但正文行未成功读取，故无法核对，也不能判定为“缺失”。')
+        self.assertFalse(archive_absence_issues(text,self.sources))

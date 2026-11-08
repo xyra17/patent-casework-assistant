@@ -144,6 +144,21 @@ def consistent_read(function):
     return wrapped
 
 
+@consistent_read
+def published_version():
+    """Version key for task-local reads, including scope and manual changes."""
+    with db() as conn:
+        values={
+            'database':str(database_path()),
+            'roots':[tuple(r) for r in conn.execute('SELECT id,enabled,version,generation,state,classification FROM roots ORDER BY id')],
+            'cases':[tuple(r) for r in conn.execute('SELECT case_key,version FROM cases ORDER BY case_key')],
+            'files':[tuple(r) for r in conn.execute('SELECT id,active,revision,parser_key,state FROM files ORDER BY id')],
+            'people':[tuple(r) for r in conn.execute('SELECT id,version,enabled FROM people ORDER BY id')],
+            'settings':[tuple(r) for r in conn.execute('SELECT key,value FROM settings ORDER BY key')],
+        }
+    return digest(values)
+
+
 def allowed_roots() -> list[Path]:
     raw = os.getenv('CASEWORK_ALLOWED_ROOTS', '').strip()
     values = json.loads(raw) if raw else [str(PROJECT_ROOT / 'examples/department_shared_drive/source')]

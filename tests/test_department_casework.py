@@ -241,7 +241,7 @@ class DepartmentCaseworkTests(unittest.TestCase):
             result=json.loads(query_department_cases.invoke({'operation':'monthly','start_month':'2026-09','end_month':'2026-10'}))
         report=result['answer_markdown']
         checked=asyncio.run(check_statistics(report,entries))
-        self.assertEqual(checked['status'],'passed',checked);self.assertEqual(checked['checked_claims'],4)
+        self.assertEqual(checked['status'],'passed',checked);self.assertEqual(checked['checked_claims'],8)
         wrong=report.replace('| 4 [','| 40 [')
         self.assertEqual(asyncio.run(check_statistics(wrong,entries))['status'],'failed')
         wrong=report.replace('2026年9月','2026年8月')
@@ -388,8 +388,10 @@ class DepartmentCaseworkTests(unittest.TestCase):
         try:
             with patch('api.evidence.add',side_effect=add),patch('api.evidence.snapshot',return_value=entries),patch('api.monitor.monitor.report',side_effect=report):
                 result=asyncio.run(execute(request,'case-brief-test',1,sources_for(request)))
-            self.assertEqual([e[1]['tool_name'] for e in events if e[0]=='tool_start'],['query_department_cases','search_case_archive'])
-            self.assertTrue(all(e[1]['args'].get('query')=='DEMO-2026-013' for e in events if e[0]=='tool_start'))
+            self.assertEqual([e[1]['tool_name'] for e in events if e[0]=='tool_start'],['query_department_cases','search_case_archive','collect_case_materials'])
+            self.assertTrue(all((e[1]['args'].get('query') or e[1]['args'].get('case_id'))=='DEMO-2026-013' for e in events if e[0]=='tool_start'))
+            self.assertIn('材料范围与版本',result['report'])
+            self.assertEqual(result['execution_contract']['read_schedule'],'sequential_same_snapshot')
             self.assertIn('2026-10-24',result['report']);self.assertIn('HNSW',result['report'])
             self.assertIn('| 向局提交期限 | 实际交局日期 | 交局核实 |',result['report'])
             self.assertIn('| 未核实 | 未核实 |',result['report'])
@@ -435,3 +437,76 @@ class DepartmentCaseworkTests(unittest.TestCase):
         finally:context.clear_tool_budgets('read-budget');context.reset_session()
 
 if __name__=='__main__':unittest.main()
+
+
+class MonthlyAggregateContractTests(unittest.TestCase):
+    """Range totals and month-over-month percentages come from the program."""
+
+    setUp = DepartmentCaseworkTests.setUp
+    tearDown = DepartmentCaseworkTests.tearDown
+
+    def test_range_total_and_percentage_are_source_owned(self):
+        import asyncio
+        from unittest.mock import patch
+        from tools.casework_tools import query_department_cases
+        from tools.statistics_check import check_statistics
+        entries=[]
+        def add(thread,item):
+            entry={**item,'id':'S'+str(len(entries)+1)};entries.append(entry);return entry['id']
+        with patch('api.evidence.add',side_effect=add):
+            result=json.loads(query_department_cases.invoke(
+                {'operation':'monthly','start_month':'2026-09','end_month':'2026-10','compare_months':True}))
+        report=result['answer_markdown']
+        self.assertIn('区间合计',report)
+        range_totals=[e for e in entries if (e.get('statistics') or {}).get('metrics')
+                      and e['statistics']['metrics'][0]['column'].endswith('_total_count')]
+        self.assertEqual({e['statistics']['metrics'][0]['column'] for e in range_totals},
+                         {'received_total_count','filed_total_count'})
+        for entry in range_totals:
+            metric=entry['statistics']['metrics'][0]
+            self.assertEqual(metric['unit'],'件')
+            self.assertEqual(metric['time']['status'],'bounded')
+        comparison=result['comparisons'][0]
+        for key,column in (('received_change_pct','received_change_pct'),
+                           ('filed_change_pct','filed_change_pct')):
+            if comparison[key] is None:
+                self.assertIn('不计算百分比',report)
+                continue
+            pct=[e for e in entries if e['id']==comparison['pct_evidence_id']][0]
+            metrics={m['column']:m for m in pct['statistics']['metrics']}
+            self.assertIn(column,metrics)
+            self.assertEqual(metrics[column]['unit'],'%')
+            self.assertEqual(metrics[column]['time']['field'],'month_comparison')
+        checked=asyncio.run(check_statistics(report,entries))
+        self.assertIn(checked['status'],('passed',),checked)
+
+
+class CaseCountContractTests(unittest.TestCase):
+    """The filtered total and the in-progress count are separate metrics."""
+
+    setUp = DepartmentCaseworkTests.setUp
+    tearDown = DepartmentCaseworkTests.tearDown
+
+    def test_count_evidence_carries_filtered_and_active_totals(self):
+        import asyncio,json
+        from unittest.mock import patch
+        from tools.casework_tools import query_department_cases
+        from tools.statistics_check import check_statistics
+        entries=[]
+        def add(thread,item):
+            entry={**item,'id':'S'+str(len(entries)+1)};entries.append(entry);return entry['id']
+        from api import context, source_policy
+        self.addCleanup(context.reset_session)
+        context.set_session('count-contract',str(self.base)); source_policy.configure(['db_query'],[])
+        with patch('api.evidence.add',side_effect=add):
+            result=json.loads(query_department_cases.invoke(
+                {'operation':'cases','client':'客户甲（模拟）','include_count':True}))
+        count=[e for e in entries if e['id']==result['count_evidence_id']][0]
+        metrics={m['column']:m for m in count['statistics']['metrics']}
+        self.assertEqual(set(metrics),{'matched_case_count','active_count'})
+        self.assertEqual(count['rows'][0][0],result['total'])
+        self.assertLessEqual(count['rows'][0][1],result['total'])
+        table=result['count_answer_markdown']
+        self.assertIn('筛选案件数量（件）',table);self.assertIn('在办案件数量（件）',table)
+        answer=table
+        self.assertEqual(asyncio.run(check_statistics(answer,entries))['status'],'passed')

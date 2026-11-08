@@ -136,16 +136,25 @@ class EvidenceContextMiddleware(AgentMiddleware):
         if call['name'] not in names:return None, None
         from api import source_policy
         policy = source_policy.current_policy()
-        key = json.dumps([context.get_round(),sorted(policy.active) if policy else [],
+        from casework import read_cache
+        shared=call['name'] in read_cache.SOURCES
+        if shared:
+            shared_key=read_cache.key(call['name'],call.get('args',{}))
+            key='task:'+shared_key if shared_key else None
+            cached=read_cache.get(shared_key)
+        else:
+            key = json.dumps([context.get_round(),sorted(policy.active) if policy else [],
+                          sorted(policy.forbidden) if policy else [],
                           call['name'],call.get('args',{})],ensure_ascii=False,sort_keys=True,default=str)
-        cached = self._tool_cache.get(key)
+            cached = self._tool_cache.get(key)
         if cached is None:return key, None
         context.note_no_progress()
         ref = hashlib.sha256(cached.encode()).hexdigest()
         storage.save_context_artifact(self.thread_id, ref, cached)
         from harness.context import evidence_ids
         ids = ''.join('['+i+']' for i in evidence_ids(cached))
-        storage.record_context_decision(self.thread_id,self.agent,{'event':'tool_cache_hit','tool':call['name']})
+        storage.record_context_decision(self.thread_id,self.agent,{'event':'tool_cache_hit','tool':call['name'],
+            'scope':'task_versioned' if shared else 'round'})
         return key, ToolMessage(content='相同查询此前已完成，请直接复用以下已有结果并汇总。来源索引：'+ids+'\n'+cached[:4000]+
             '\n仅缺必要细节时按原文ref回读：'+ref, tool_call_id=call['id'], name=call['name'])
 
@@ -158,7 +167,10 @@ class EvidenceContextMiddleware(AgentMiddleware):
             if isinstance(content,str) and not content.lstrip().startswith(
                     ('禁止执行','查询未完成','网络检索失败','数据库查询失败','知识库检索失败',
                      '知识库读取失败','本轮','未检索到','知识库中未检索到','未找到','查询无结果')):
-                self._tool_cache[key] = content
+                if key.startswith('task:'):
+                    from casework import read_cache
+                    read_cache.put(key[5:],content)
+                else:self._tool_cache[key] = content
         return response
 
     def dependency_feedback(self, request):

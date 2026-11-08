@@ -65,22 +65,95 @@ def archive_absence_issues(report, evidence):
                    (item.get('type')=='database' and any(case_id in row for row in item.get('rows',[])))
                    for item in bound):
             issues.append('案件引用身份不匹配：'+case_id+'所在段落的证据未绑定该案；附件或其他案件原文不能证明本案机制。请回读该案来源或明确未核实。')
-    for sentence in re.split(r'[。；\n]',report):
-        sentence=sentence.replace('**','').replace('`','')
-        if sentence.lstrip().startswith('>'):continue
-        if re.search(r'不能(?:说|断言|认定)|不(?:能|应|得).{0,8}全文|断言不成立',sentence):continue
-        if re.search(r'(?:只|仅|唯一)(?:出现|出现在|位于|列于)|唯一.{0,12}(?:提到|提及|涉及)|(?:正文|全文|原件).{0,30}(?:相关|涉及|提及|出现).{0,12}(?:的是|只有|仅有)[一二两三四五六七八九十\d]+处',sentence):
-            issues.append('唯一位置断言未获程序核验：'+sentence.strip()[:180]+'；直接引用已见位置，不断言只出现于某处；局部回读不能证明唯一')
-            continue
-        if re.search(r'本次|已读|已回读|已取得|解析文本|所引|片段|当前可见',sentence):continue
-        if re.search(r'(?:正文|全文|原件)(?:中|里|自身)?(?:没有|未见|未记载|未给出)|(?:正文|全文|原件).{0,16}(?:既没有|没有(?:正面|明确)?(?:写|提及|记载|说明)|未(?:提及|记载|说明|交代))|(?:正文|全文|原件).{0,16}(?:唯一|没有任何|未出现|没有一处)',sentence):
-            issues.append('原文范围未限定：'+sentence.strip()[:180]+'；请逐处限定为本次已回读片段或已发布解析文本，不用文末免责声明替代')
+    for line in report.splitlines():
+        line_refs = re.findall(r'\[S\d+\]', line)
+        pieces = _source_sentences(line)
+        for index, sentence in enumerate(pieces):
+            sentence=sentence.replace('**','').replace('`','')
+            if not sentence.strip():continue
+            if sentence.lstrip().startswith('>'):continue
+            if re.search(r'不能(?:说|断言|认定)|不(?:能|应|得).{0,8}全文|断言不成立',sentence):continue
+            if re.search(r'(?:只|仅|唯一)(?:出现|出现在|位于|列于)|唯一.{0,12}(?:提到|提及|涉及)|(?:正文|全文|原件).{0,30}(?:相关|涉及|提及|出现).{0,12}(?:的是|只有|仅有)[一二两三四五六七八九十\d]+处',sentence):
+                issues.append('唯一位置断言未获程序核验：'+sentence.strip()[:180]+'；直接引用已见位置，不断言只出现于某处；局部回读不能证明唯一')
+                continue
+            if re.search(r'本次|已读|已回读|已取得|解析文本|所引|片段|当前可见',sentence):continue
+            unquoted = _strip_quotes(sentence)
+            if (re.search(r'(?:档案|案卷|本案).{0,16}(?:只找到|只有一份|仅有一份)', unquoted)
+                    or re.search(r'(?:没有|不存在|未提供).{0,16}(?:立案原件|立案文件|技术交底文件|绘图附件)', unquoted)):
+                issues.append('材料缺失断言未核验：'+sentence.strip()[:180]
+                    +'；申请文件片段不能证明案卷中其他文件不存在。请限定为“本次未取得”，或读取完整目录后提供逐文件依据。')
+                continue
+            if re.search(r'(?:正文|全文|原件)(?:中|里|自身)?(?:没有|未见|未记载|未给出)|(?:正文|全文|原件).{0,16}(?:既没有|没有(?:正面|明确)?(?:写|提及|记载|说明)|未(?:提及|记载|说明|交代))|(?:正文|全文|原件).{0,16}(?:唯一|没有任何|未出现|没有一处)',sentence):
+                issues.append('原文范围未限定：'+sentence.strip()[:180]+'；请逐处限定为本次已回读片段或已发布解析文本，不用文末免责声明替代')
+                continue
+            # A meeting register, application text or ledger is also a finite
+            # source: claiming something is absent from it needs the actual
+            # evidence id. A citation closing the same line counts.
+            if _absence_about_source(sentence) and not (re.search(r'\[S\d+\]',sentence)
+                    or (line_refs and _only_citations_after(pieces[index+1:]))):
+                issues.append('否定性断言缺少来源：'+sentence.strip()[:180]+'；须引用实际检索到的会议/正文/案件来源，或限定为本次已取得范围')
     return issues
+
+
+def _source_sentences(line):
+    """A quoted period must not detach a statement from its trailing citation."""
+    closers = {'“': '”', '「': '」', '『': '』', '"': '"'}
+    stack, pieces, start = [], [], 0
+    for index, char in enumerate(line):
+        if stack and char == stack[-1]:
+            stack.pop()
+        elif char in closers:
+            stack.append(closers[char])
+        elif char in '。；' and not stack:
+            pieces.append(line[start:index])
+            start = index + 1
+    if start < len(line):
+        pieces.append(line[start:])
+    return pieces
+
+
+def _only_citations_after(rest):
+    """A citation or two closing the line still belongs to that statement."""
+    tail=''.join(rest)
+    return not re.sub(r'\[S\d+\]|[\s`*（）()。，、；:：|\-]', '', tail)
+
+
+_ABSENCE_SOURCE = r'(?:会议(?:记录|资料|纪要|表)|申请文件|交底书|案件信息|已接入资料|检索结果|候选材料)'
+# The absence has to be predicated directly on the source ("会议记录中均无…").
+# A loose window would catch unrelated negatives such as "不含冲突字段的情况".
+_ABSENCE_PREDICATE = r'(?:中|里|内|上|面)?(?:均|都|也|全部|一律|则)?[^，。；、\d]{0,4}?(?:没有|无|不存在|未见|未记录|未登记|未记载|未提及|未列出)'
+# A sentence that only states that a source could not be read/located is a
+# coverage gap, not an unsupported absence claim; those must not be rejected.
+_ABSENCE_LIMITATION = re.compile(r'未取得|未读取|未成功|无法核对|不能判定|无法读取|尚未取得|未打开|覆盖缺口|未定位|未找到')
+def _strip_quotes(text):
+    """Quoted source text asserts what the document says, not what it lacks."""
+    return re.sub(r'"[^"]*"|“[^”]*”|「[^」]*」|『[^』]*』', '', text)
+def _absence_about_source(sentence):
+    if _ABSENCE_LIMITATION.search(sentence):
+        return False
+    # Only the unquoted part can assert absence in a source we actually read.
+    bare = _strip_quotes(sentence)
+    # Sentence splitting can cut a quotation in half; the open half is still a quote.
+    bare = re.sub(r'[“"「『][^”"」』]*$', '', bare)
+    if not re.search(_ABSENCE_SOURCE, bare):
+        return False
+    return bool(re.search(_ABSENCE_SOURCE + _ABSENCE_PREDICATE, bare))
 def unsupported_reasoning_issues(report, evidence, query):
     """Reject narrow, explicit inferences that cannot be supplied by a title."""
     snippets=[e.get('snippet','') for e in evidence if e.get('type') in ('knowledge','web')]
     importance=r'按.{0,18}(?:通道|token|层级).{0,12}(?:评估|计算|衡量|评分|打分).{0,4}重要性|按.{0,18}(?:通道|token).{0,5}重要性.{0,8}(?:分组|划组|分层)'
     issues=[]
+    documented_counterexamples=[item for item in evidence
+        if item.get('type')=='knowledge' and item.get('casework')
+        and re.search(r'(?:本材料的关键反例为|实施例二：反例与失败路径|独立反例检查)',
+                      str(item.get('snippet') or ''))]
+    unsupported_absence = any(
+        re.search(r'反例(?:只.{0,12})?(?:尚未|还未|没有|未)(?:成文|形成|写入)', clause)
+        and not re.search(r'不能(?:断言|说|认为).{0,12}反例|会议(?:记录|登记|层面)(?:中|里|内)?.{0,16}反例', clause)
+        for clause in re.split(r'[。；\n]', report.replace('**', '')))
+    if documented_counterexamples and unsupported_absence:
+        ids='、'.join(sorted({item['id'] for item in documented_counterexamples if item.get('id')}))
+        issues.append('反例成文状态与已取得申请文件矛盾：'+ids+'已写有反例；会议记录要求补入边界说明，不能推断申请文件中反例尚未成文。请分别说明会议待办与申请文件已写内容。')
     if (any(item.get('casework') for item in evidence)
             and re.search(r'(?:立即|实时|同步)(?:物理)?删除',report)
             and not any(re.search(r'(?:立即|实时|同步)(?:物理)?删除',text) for text in snippets)):
@@ -346,6 +419,13 @@ def finalize_review(decision: ContentReviewDecision, result: dict, visible_ids: 
     index=review_anchor_index(result)
     tables={kind:{r['id']:r['quote'] for r in rows} for kind,rows in index.items()}
     checks=[]
+    business=result.get('business_check') or {}
+    if business.get('status')=='passed' and business.get('report_sha256')==hashlib.sha256(result.get('report','').encode()).hexdigest():
+        for criterion,label in [('evidence_support','来源与字段'),('business_rules','业务口径'),('consistency','正文与程序结果一致')]:
+            checks.append({'id':'B'+str(len(checks)+1),'criterion':criterion,'label':label,
+                'status':'passed','reason':'none','detail':'程序核对通过；仅覆盖本次固定契约，不是独立人工验收。',
+                'evidence_ids':[e['id'] for e in result.get('evidence',[]) if e.get('id')],
+                'action':'none','action_label':'无需修正','followup_ids':[]})
     for original in decision.checks:
         item=original.model_copy()
         for kind in ('task','answer'):

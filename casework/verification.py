@@ -41,6 +41,8 @@ def delivery(request, payload):
     def ledger(value):
         from casework.requirements import selected_due_statuses, due_group
         return {'case_ids': [r['case_id'] for r in value['rows']], 'has_more': value['has_more'],
+                'total':value.get('total'),'returned_rows':len(value['rows']),
+                'duplicate_case_ids':value.get('duplicate_case_ids',[]),
                 'fields': ['case_id','owner','stage','received_date','draft_due_date','client_review_due_date','filing_due_date','actual_filed_date','filing_verified','conflicts'],
                 'unknown_due_ids': [r['case_id'] for r in value.get('unknown_due_cases', [])],
                 'filing_month_decision': request.filing_month,
@@ -57,7 +59,13 @@ def delivery(request, payload):
     if request.operation == 'summary':return {'fields':['total_count','active_count','filed_count','unknown_stage_count'],'complete_snapshot':True,'as_of':payload['as_of']}
     if request.operation == 'archive': return {**archive(payload),'selection_review':payload.get('selection_review')}
     if request.operation == 'cases': return ledger(payload)
-    if request.operation == 'case_brief': return {'ledger': ledger(payload['ledger']), 'archive': archive(payload['archive']), 'registered_material_gaps':'case_meetings' in payload['ledger'],'manual_checks': True}
+    if request.operation == 'case_brief':
+        return {'ledger': ledger(payload['ledger']), 'archive': archive(payload['archive']),
+            'registered_material_gaps':'case_meetings' in payload['ledger'],'manual_checks': True,
+            'fields':['date','case_id','actual_iprs','actual_agents','content','pending','changes'],
+            'meeting_scope':request.meeting_scope,
+            'material_gaps':payload.get('materials',{}).get('gaps',[]),
+            'material_read_scope':payload.get('materials',{}).get('scope','未执行完整材料读取')}
     if request.operation == 'monthly': return {'missing_date_field':payload.get('missing_date_field'), 'unknown_actual_ids':[r['case_id'] for r in payload.get('unknown_actual_dates',[])], 'date_completeness':payload.get('date_completeness',{}), 'markdown_report':'planned' if any(r.kind=='markdown_report' for r in request.requirements) else None, 'months': [r['month'] for r in payload['totals']], 'fields': ['actual_received_count','verified_actual_filed_count','unknown_lists','conflicts'], 'comparisons':payload.get('comparisons',[]), 'scope': '两个实际发生日期分别归月；未知不能归月；月份变化由程序相减'}
     if request.operation == 'meetings':
         from casework.workflow import meeting_detail_fields
@@ -86,6 +94,8 @@ def task_contract_issues(query, request, delivered):
     from casework.requirements import requirement_issues, constraint_issues, selected_due_statuses
     text = affirmative(query)
     issues = []
+    if request.operation=='case_brief' and re.search(r'最近(?:一次|一场)?会议|最新(?:一次|一场)?会议',query) and request.meeting_scope!='latest':
+        issues.append('最近会议要求未绑定到最新有日期的会议范围')
     from casework.requirements import external_comparison_requested,case_mechanism_judgment_requested
     if case_mechanism_judgment_requested(query):
         issues.append('指定案件是否采用机制需要综合解释，原文摘录不能代替推理结论')
@@ -107,6 +117,13 @@ def task_contract_issues(query, request, delivered):
         entities=known_entities(text)
         if len(entities['client'])==1 and request.client!=entities['client'][0]:
             issues.append('客户案件筛选未保留')
+        if delivered and (request.case_field or request.case_fields) and len(delivered.get('case_ids',[]))>1:
+            issues.append('单案字段查询对应多个目录记录，须明确来源目录，不能静默选择')
+        if delivered and any(re.search(r'全部|所有|完整清单',r.quote) for r in request.requirements):
+            if delivered.get('has_more') or delivered.get('returned_rows')!=delivered.get('total'):
+                issues.append('完整清单尚未读完同一范围的全部分页')
+            if delivered.get('duplicate_case_ids'):
+                issues.append('完整清单存在跨目录同案号，尚不能按案件去重计数')
         missing_words=r'未知|未核实|尚未核实|未记录|缺失|空白|为空'
         for field,words in [('received_date',r'(?:实际)?收案日期'),('actual_filed_date',r'实际交局日期')]:
             if re.search(words+r'.{0,8}(?:'+missing_words+')',text) and not ids and request.missing_date_field!=field:
@@ -292,6 +309,9 @@ def verify(request, payload, evidence, report):
                     fail(f'{cid} 实际日期未知清单混入已核实日期')
             db(value['evidence_id'], {label: row.get(k) for k, label in labels.items()} |
                {'交局已核实': row['filing_verified'] == '已核实'}, cid)
+            for selected_field in set(request.case_fields or [request.case_field]) & {'title','client_alias'}:
+                label={'title':'发明名称','client_alias':'客户简称'}[selected_field]
+                db(value['evidence_id'],{'所编号':cid,label:row.get(selected_field)},cid)
             if request.operation in ('cases', 'case_brief') and parser.CASE_RE.fullmatch(request.query) and cid != request.query:
                 fail('案件查询结果与显式案号不符')
             for field, candidates in row['conflicting_candidates'].items():
@@ -322,11 +342,31 @@ def verify(request, payload, evidence, report):
     elif request.operation == 'case_brief':
         cases(payload['ledger'])
         archive(payload['archive'])
-        if any(r.kind=='case_material_gaps' for r in request.requirements):
+        packet=payload.get('materials')
+        if packet:
+            if packet.get('case_id')!=request.query:fail('材料包案号与任务不符')
+            if packet.get('inventory_evidence_id'):
+                inventory=source(packet['inventory_evidence_id'],'knowledge')
+                manifest=[{k:v for k,v in d.items() if k!='chunks'} for d in packet['documents']]
+                if inventory.get('snippet')!=json.dumps(manifest,ensure_ascii=False):fail('材料清单与登记证据不一致')
+            for doc in packet.get('documents',[]):
+                chunks=doc['chunks']
+                if doc['complete_published_text'] and (not doc.get('current') or len(chunks)!=doc.get('total_chunks')):
+                    fail('未完整读取的材料被标记为已完整读取')
+                for chunk in chunks:
+                    proof=source(chunk['evidence_id'],'knowledge')
+                    if any(proof.get(k)!=v for k,v in {
+                        'case_id':request.query,'file_id':doc['id'],'revision':doc['revision'],
+                        'parser_key':doc['parser_key'],'snippet':chunk['text'],'location':chunk['location']}.items()):
+                        fail('材料正文与文件版本或来源片段不一致')
+            for gap in packet.get('gaps',[]):
+                if gap not in report:fail('已知材料缺口未展示')
+        if any(r.kind=='case_material_gaps' or r.kind.startswith('meeting_') for r in request.requirements):
             meetings=payload['ledger'].get('case_meetings')
             if meetings is None:fail('单案登记待补材料未读取')
             else:
-                for row in meetings['rows']:
+                from casework.workflow import selected_brief_meetings
+                for row in selected_brief_meetings(meetings,request)['rows']:
                     if row['case_id']!=request.query:fail('单案待补材料混入其他案号')
                     db(meetings['evidence_id'],{'所编号':row['case_id'],'会议日期':row['date'],'待补材料':row.get('pending')},row['case_id'])
                     if cell(row.get('pending')) not in report:fail('本案已登记待补材料未交付')
@@ -462,5 +502,6 @@ def verify(request, payload, evidence, report):
     return {'version': 1, 'status': 'failed' if issues else 'passed', 'issues': issues,
             'checked_claims': len(claims), 'claims': claims,
             'report_sha256': hashlib.sha256(report.encode()).hexdigest(),
+            'evidence_sha256': store.digest(evidence),
             'request': request.model_dump(exclude_none=True,exclude_defaults=True),
             'scope': '字段同列同行、原文及文件版本绑定、业务日期和负荷不变量；仍需语义审查与原件质量核对'}

@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080" role="img" aria-label="业务全景与人机协作">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#526276" stroke-width="1.6"/></marker></defs>
+<rect x="0" y="0" width="1600" height="1080" fill="#ffffff"/>
+<g font-family="Inter, Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" fill="#243247">
+<text x="46" y="43" font-size="27" font-weight="650" text-anchor="start" fill="#243247">FIGURE 00  /  业务全景与人机协作</text>
+<text x="46" y="72" font-size="16" font-weight="400" text-anchor="start" fill="#526276">案件查阅、会前准备、期限排查、月报与分案参考</text>
+<polyline points="46,88 1554,88" fill="none" stroke="#c9d2dc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="50" y="120" width="1500" height="135" rx="7" fill="#f6f9fc" stroke="#34688d" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="68" y="152" font-size="20" font-weight="650" text-anchor="start" fill="#34688d">使用者与工作目标</text>
+<g data-node="true">
+<rect x="100" y="170" width="600" height="65" rx="5" fill="#ffffff" stroke="#34688d" stroke-width="1.7"/>
+<rect x="100" y="170" width="5" height="65" fill="#34688d"/>
+<text x="118" y="201" font-size="20" font-weight="650" text-anchor="start" fill="#243247">代理师 / 业务人员</text>
+<text x="118" y="225" font-size="16" font-weight="400" text-anchor="start" fill="#526276">按案查阅资料，准备会议与后续办理</text>
+</g>
+<g data-node="true">
+<rect x="900" y="170" width="600" height="65" rx="5" fill="#ffffff" stroke="#34688d" stroke-width="1.7"/>
+<rect x="900" y="170" width="5" height="65" fill="#34688d"/>
+<text x="918" y="201" font-size="20" font-weight="650" text-anchor="start" fill="#243247">部门负责人 / 管理者</text>
+<text x="918" y="225" font-size="16" font-weight="400" text-anchor="start" fill="#526276">掌握案件进度、计划期限与登记负荷</text>
+</g>
+<g data-node="true">
+<rect x="70" y="330" width="250" height="90" rx="5" fill="#ffffff" stroke="#4c8069" stroke-width="1.7"/>
+<rect x="70" y="330" width="5" height="90" fill="#4c8069"/>
+<text x="88" y="361" font-size="20" font-weight="650" text-anchor="start" fill="#243247">案件查阅</text>
+<text x="88" y="385" font-size="16" font-weight="400" text-anchor="start" fill="#526276">负责人 · 阶段 · 三项期限</text>
+</g>
+<polyline points="195,420 195,475 800,475" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<g data-node="true">
+<rect x="375" y="330" width="250" height="90" rx="5" fill="#ffffff" stroke="#4c8069" stroke-width="1.7"/>
+<rect x="375" y="330" width="5" height="90" fill="#4c8069"/>
+<text x="393" y="361" font-size="20" font-weight="650" text-anchor="start" fill="#243247">会前准备</text>
+<text x="393" y="385" font-size="16" font-weight="400" text-anchor="start" fill="#526276">技术原文 · 最近会议待补</text>
+</g>
+<polyline points="500,420 500,475 800,475" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<g data-node="true">
+<rect x="680" y="330" width="250" height="90" rx="5" fill="#ffffff" stroke="#4c8069" stroke-width="1.7"/>
+<rect x="680" y="330" width="5" height="90" fill="#4c8069"/>
+<text x="698" y="361" font-size="20" font-weight="650" text-anchor="start" fill="#243247">期限排查</text>
+<text x="698" y="385" font-size="16" font-weight="400" text-anchor="start" fill="#526276">计划日逾期 · 临近 · 未知</text>
+</g>
+<polyline points="805,420 805,475 800,475" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<g data-node="true">
+<rect x="985" y="330" width="250" height="90" rx="5" fill="#ffffff" stroke="#4c8069" stroke-width="1.7"/>
+<rect x="985" y="330" width="5" height="90" fill="#4c8069"/>
+<text x="1003" y="361" font-size="20" font-weight="650" text-anchor="start" fill="#243247">月度统计</text>
+<text x="1003" y="385" font-size="16" font-weight="400" text-anchor="start" fill="#526276">实际收案 · 已核实交局</text>
+</g>
+<polyline points="1110,420 1110,475 800,475" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<g data-node="true">
+<rect x="1290" y="330" width="250" height="90" rx="5" fill="#ffffff" stroke="#4c8069" stroke-width="1.7"/>
+<rect x="1290" y="330" width="5" height="90" fill="#4c8069"/>
+<text x="1308" y="361" font-size="20" font-weight="650" text-anchor="start" fill="#243247">参考与辅助分案</text>
+<text x="1308" y="385" font-size="16" font-weight="400" text-anchor="start" fill="#526276">相关原文 · 登记负荷</text>
+</g>
+<polyline points="1415,420 1415,475 800,475" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="400,235 400,290 195,290 195,330" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1200,235 1200,290 1415,290 1415,330" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="400,290 500,290 500,330" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1200,290 805,290 805,330" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1200,290 1110,290 1110,330" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="50" y="520" width="1500" height="225" rx="7" fill="#faf9fc" stroke="#76679b" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="68" y="552" font-size="20" font-weight="650" text-anchor="start" fill="#76679b">探渊提供的辅助处理</text>
+<g data-node="true">
+<rect x="85" y="590" width="390" height="110" rx="5" fill="#ffffff" stroke="#34688d" stroke-width="1.7"/>
+<rect x="85" y="590" width="5" height="110" fill="#34688d"/>
+<text x="103" y="621" font-size="20" font-weight="650" text-anchor="start" fill="#243247">接入获准资料</text>
+<text x="103" y="645" font-size="16" font-weight="400" text-anchor="start" fill="#526276">案件信息 · 逐场会议 · 案卷原文</text>
+<text x="103" y="667" font-size="16" font-weight="400" text-anchor="start" fill="#526276">公司文档 · 本次附件</text>
+</g>
+<g data-node="true">
+<rect x="605" y="590" width="390" height="110" rx="5" fill="#ffffff" stroke="#76679b" stroke-width="1.7"/>
+<rect x="605" y="590" width="5" height="110" fill="#76679b"/>
+<text x="623" y="621" font-size="20" font-weight="650" text-anchor="start" fill="#243247">取数、找原文与核对</text>
+<text x="623" y="645" font-size="16" font-weight="400" text-anchor="start" fill="#526276">直接查询 · 固定流程 · 条件分支</text>
+<text x="623" y="667" font-size="16" font-weight="400" text-anchor="start" fill="#526276">开放任务按需交给 Agent</text>
+</g>
+<g data-node="true">
+<rect x="1125" y="590" width="390" height="110" rx="5" fill="#ffffff" stroke="#9b7541" stroke-width="1.7"/>
+<rect x="1125" y="590" width="5" height="110" fill="#9b7541"/>
+<text x="1143" y="621" font-size="20" font-weight="650" text-anchor="start" fill="#243247">交付带来源的结果</text>
+<text x="1143" y="645" font-size="16" font-weight="400" text-anchor="start" fill="#526276">简答 · 清单 · 会前卡 · 图表 / 报告</text>
+<text x="1143" y="667" font-size="16" font-weight="400" text-anchor="start" fill="#526276">保留出处、未知、冲突与未完成项</text>
+</g>
+<polyline points="800,475 800,590" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="475,645 605,645" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="995,645 1125,645" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<g data-node="true">
+<rect x="350" y="850" width="900" height="120" rx="5" fill="#ffffff" stroke="#4c8069" stroke-width="1.7"/>
+<rect x="350" y="850" width="5" height="120" fill="#4c8069"/>
+<text x="368" y="881" font-size="22" font-weight="650" text-anchor="start" fill="#243247">业务人员核对并决定后续办理</text>
+<text x="368" y="905" font-size="16" font-weight="400" text-anchor="start" fill="#526276">回看来源，核对未知与冲突；按需要补充资料或调整问题</text>
+<text x="368" y="927" font-size="16" font-weight="400" text-anchor="start" fill="#526276">确认办理安排、分案或其他业务操作</text>
+</g>
+<polyline points="1320,700 1320,800 800,800 800,850" fill="none" stroke="#526276" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="350,910 25,910 25,202 100,202" fill="none" stroke="#4c8069" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<text x="70" y="890" font-size="15" font-weight="400" text-anchor="start" fill="#4c8069">补充资料 / 调整要求</text>
+</g></svg>

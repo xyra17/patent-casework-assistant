@@ -12,6 +12,7 @@ UNITS = r'亿元人民币|万元人民币|亿元|万元|千元|美元|美金|港
 NUMBER = re.compile(rf'[-+−]?(?:\d{{1,3}}(?:[,，]\d{{3}})+|\d+)(?:\.\d+)?(?:\s*(?:{UNITS}))?|百分之[零〇一二两三四五六七八九十百千万亿点]+|[零〇一二两三四五六七八九十百千万亿点]+(?:元|条|个|件|项|份|盒|人|种|次|家)')
 YEAR = re.compile(r'(?<!\d)(\d{4})年(?:(\d{1,2})月(?:(\d{1,2})日)?)?')
 ISO_DATE = re.compile(r'(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)')
+ISO_MONTH = re.compile(r'(?<!\d)(\d{4})-(0[1-9]|1[0-2])(?![-\d])')
 
 
 class StatisticClaim(BaseModel):
@@ -30,7 +31,7 @@ def _normalized(text): return re.sub(r'[\s`*]', '', str(text)).casefold()
 
 def _masked(text):
     chars = list(text)
-    spans = [*re.finditer(r'\[S\d+\]|(?<![A-Za-z0-9_])S\d+(?![A-Za-z0-9_])|https?://\S+|`[^`]*`', text), *ISO_DATE.finditer(text), *YEAR.finditer(text),
+    spans = [*re.finditer(r'\[S\d+\]|(?<![A-Za-z0-9_])S\d+(?![A-Za-z0-9_])|https?://\S+|`[^`]*`', text), *ISO_DATE.finditer(text), *ISO_MONTH.finditer(text), *YEAR.finditer(text),
              *re.finditer(r'第[零〇一二两三四五六七八九十百千万\d]+(?:[—－–-][零〇一二两三四五六七八九十百千万\d]+)?[条章节项款]|(?<!\d)\d+(?:\.\d+){2,}(?!\d)', text),
              *re.finditer(r"(?<!\d)\d{1,2}月(?:\d{1,2}日)?", text),
              *re.finditer(r'(?:某|任何|任意|每|另|同)一(?:个|件|份|项|种|次|人)',text),
@@ -94,6 +95,11 @@ def statement_units(report):
                 for match in list(numbers):
                     cell_index = piece[:match.start()].count('|') - 1
                     if 0 <= cell_index < len(names) and re.search(r'年份|年度|月份|日期|时间|编号|序号|申请号|公布号|公告号|案号|名称|标题|\b(?:id|year|date)\b', names[cell_index], re.I):
+                        numbers.remove(match)
+            else:
+                # "7、8 月均无记录" names months, not measured quantities.
+                for match in list(numbers):
+                    if re.match(r'(?:\s*[、,，/]\s*\d{1,2})*\s*月', piece[match.end():]):
                         numbers.remove(match)
             if numbers:
                 result.append({'id': len(result), 'text': piece, 'headings': '\n'.join(headings.values()),
@@ -182,6 +188,8 @@ def reported_time(text, *, year_cell=False):
     try:
         for match in dates:
             day = date.fromisoformat(match[0]); intervals.append({'start':day.isoformat(),'end':(day+timedelta(days=1)).isoformat()})
+        for match in ISO_MONTH.finditer(text):
+            intervals.append(month_scope(match[1], match[2]))
         for match in chinese:
             year, month, day = match.groups()
             if day:
@@ -257,12 +265,87 @@ def _row_scope(item, metric, row):
     return time, dimensions
 
 
+# A trailing parenthetical that restates the row's scope (same filter, field
+# name or date range) is decoration, not part of the metric name. A qualifier
+# such as “不含税” changes the definition and must never be stripped.
+_SCOPE_PAREN = re.compile(r'[（(][^（()）]*(?:同一|筛选|范围|口径|区间|字段|日期|时间|落在|之间|截至|'
+                          r'(?<![A-Za-z0-9_])[a-z]+_[a-z_]+(?![A-Za-z0-9_])|\d{4}-\d{2}-\d{2})[^（()）]*[）)]\s*$')
+
+
 def metric_label(text):
-    """Remove only explicit date/unit decorations, preserving metric meaning."""
+    """Remove only explicit date/unit/scope decorations, preserving meaning."""
     text=re.sub(rf'[（(]\s*(?:{UNITS})\s*[）)]$', '', text.strip('* ')).strip()
+    while True:
+        stripped=_SCOPE_PAREN.sub('',text).strip()
+        if stripped==text:break
+        text=stripped
     text=YEAR.sub('',text)
+    text=ISO_MONTH.sub('',text)
     text=re.sub(r'(?<!\d)\d{1,2}月','',text)
     return text.strip(' ·：:')
+
+
+_PROGRAM_METRICS = (
+    ('received_total_count', r'(?:实际收案数量|收案数量)合计'),
+    ('filed_total_count', r'(?:实际交局数量|交局数量)合计'),
+    ('unknown_received_count', r'实际收案日期未核实(?:数量)?'),
+    ('unknown_filed_count', r'实际交局日期(?:或核实依据)?未核实(?:数量)?'),
+    ('missing_received_count', r'实际收案日期缺失数量'),
+    ('received_change_pct', r'(?:实际收案数量|收案数量)变化百分比'),
+    ('filed_change_pct', r'(?:实际交局数量|交局数量)变化百分比'),
+)
+_PROGRAM_SHAPE = re.compile('(?P<name>' + '|'.join(name for _, name in _PROGRAM_METRICS)
+                            + r')[^，。；、\d\-.%]{0,4}(?P<value>-?\d+(?:\.\d+)?%|\d+件)')
+
+
+def program_statement_claims(units, sources):
+    """Program-written sentences keep a fixed shape, so read them without a model.
+
+    Returns the claims plus the ids of units fully covered by them; anything else
+    still goes through model extraction.
+    """
+    registered={_normalized(name) for item in sources
+                for metric in item['statistics'].get('metrics',[]) for name in metric.get('names',[])}
+    claims=[];covered=set()
+    for unit in units:
+        if unit['header']:continue
+        found=[];spans=set()
+        for match in _PROGRAM_SHAPE.finditer(unit['text']):
+            name=match.group('name');value=match.group('value');start=match.start('value')
+            if _normalized(metric_label(name)) not in registered:continue
+            if not any(start==a or a<=start<b for a,b in unit['numbers']):continue
+            found.append(StatisticClaim(unit_id=unit['id'],metric_text=name,value_text=value,
+                occurrence=sum(unit['text'].startswith(value,x) for x,y in unit['numbers'] if x<start)))
+            spans.add((start,start+len(value)))
+        if found and spans==set(unit['numbers']):
+            claims.extend(found);covered.add(unit['id'])
+    return claims,covered
+
+
+def _heading_metric(headings, sources):
+    """Resolve a generic quantity column only from an unambiguous local heading.
+
+    Values never select their own metric. Two metrics in a heading stay ambiguous.
+    """
+    for heading in reversed(headings.splitlines()):
+        matches = {}
+        for item in sources:
+            for metric in item['statistics'].get('metrics', []):
+                if not metric.get('definition_verified'):
+                    continue
+                names = [n for n in metric.get('names', []) if n and n in heading]
+                if names:
+                    matches[metric.get('column') or metric['label']] = max(names, key=len)
+        if matches:
+            if len(matches) == 1:
+                return next(iter(matches.values()))
+            longest = max(matches.values(), key=len)
+            remainder = heading.replace(longest, '', 1)
+            if (all(name in longest for name in matches.values())
+                    and not any(name in remainder for name in matches.values())):
+                return longest
+            return None
+    return None
 
 
 def table_claims_for(units, sources):
@@ -292,19 +375,29 @@ def table_claims_for(units, sources):
                         years=set(re.findall(r'(\d{4})年',unit['headings']))
                         if len(years)==1:time_text=next(iter(years))+'年'+time_text
                     if reported_time(time_text):unit['time_cells'][a]=time_text
+            if (_normalized(metric_label(name)) not in registered
+                    and re.fullmatch(r'(?:数量|件数|数值|值)(?:[（(]件[）)])?', name)):
+                inferred = _heading_metric(unit['headings'], sources)
+                if inferred:
+                    name = inferred
+                    unit['metric_cells'][a] = inferred
             value=unit['text'][a:b]
             occurrence=sum(unit['text'].startswith(value,x) for x,y in unit['numbers'] if x<a)
             claims.append(StatisticClaim(unit_id=unit['id'],metric_text=name,value_text=value,occurrence=occurrence))
     return claims
 
 
-def _match_claim(claim, unit, sources):
+def _match_claim(claim, unit, sources, report=''):
     text, header = unit['text'], unit['header']
     offsets = [a for a,b in unit['numbers'] if text.startswith(claim.value_text, a)]
     if len(offsets) <= claim.occurrence: return None, '声明数值不是该原句中的原文'
     start = offsets[claim.occurrence]; end = start + len(claim.value_text)
     token = next((NUMBER.match(text,a) for a,b in unit['numbers'] if a==start),None)
-    if not token or end > token.end(): return None, '数值片段位置或格式不完整'
+    if not token: return None, '数值片段位置或格式不完整'
+    if end > token.end():
+        # "13 件": a space between the number and its unit is the same value.
+        if not re.fullmatch(UNITS, re.sub(r'\s+', '', text[token.end():end])):
+            return None, '数值片段位置或格式不完整'
     if end < token.end():
         # 可只摘数字，但单位必须从相邻原文读取，不能由提取器自行选择。
         trailing = text[end:token.end()].strip()
@@ -316,6 +409,15 @@ def _match_claim(claim, unit, sources):
     value, unit_name = parse_quantity(quantity)
     metric_text = claim.metric_text.strip('* ')
     metric_name = metric_label(metric_text)
+    if not header and re.fullmatch(r'数量|件数|数值|值', metric_name):
+        inferred = _heading_metric(unit['headings'], sources)
+        if inferred:
+            metric_name = inferred
+    # A sentence naming only a month ("7月2件") can still be bound by its month
+    # and value, but only when it states that month and the reading is unique.
+    time_only = not metric_name.strip()
+    if time_only and not reported_time(text):
+        return None, '缺少指标名称：请按来源指标名陈述，或写成带月份的表格行'
     metric_unit = re.search(rf'[（(]\s*({UNITS})\s*[）)]$', metric_text)
     if not unit_name and metric_unit:
         unit_name = metric_unit[1]
@@ -325,12 +427,12 @@ def _match_claim(claim, unit, sources):
         for name in registered:
             if name not in metric_name or name not in text[:start]: continue
             prefix, suffix = metric_name.split(name, 1)
-            if prefix not in ('', '各办理阶段', '各阶段', '全部', '当前', '本次', '在办', '仍在办理') or suffix not in ('', '合计', '总计'): continue
+            if prefix not in ('', '各办理阶段', '各阶段', '全部', '当前', '本次', '在办', '仍在办理') or suffix not in ('', '合计', '总计', '共计', '明细', '案件明细', '案号', '的案号'): continue
             matches.append(name)
         if matches:
             exact = max(matches, key=lambda name: (text[:start].rfind(name), len(name)))
             gap = text[text[:start].rfind(exact) + len(exact):start]
-            if re.fullmatch(r'(?:\s|[*_：:]|为|是|达到|达|共计|合计|总计|大约|约|四舍五入后)*', gap):
+            if re.fullmatch(r'(?:\s|[*_：:]|为|是|达到|达|共计|合计|总计|共|大约|约|四舍五入后|明细|案件明细|案号|的案号|[（(])*', gap):
                 metric_name = exact
                 claim = claim.model_copy(update={'metric_text': exact})
     if header:
@@ -344,7 +446,11 @@ def _match_claim(claim, unit, sources):
         before = text[:start]
         position = before.rfind(claim.metric_text)
         gap = before[position+len(claim.metric_text):] if position >= 0 else None
-        if gap is None or not re.fullmatch(r'(?:\s|[*_：:]|为|是|达到|达|共计|合计|总计|大约|约|四舍五入后)*', gap):
+        if gap is not None:
+            gap = re.sub(r'^(?:案件明细|明细|的案号|案号)', '', gap)
+        # "实际收案（2件）：…" states the same value in parentheses.
+        wrapped = gap in ('（','(') and bool(re.match(r'\s*[）)]', tail))
+        if not wrapped and (gap is None or not re.fullmatch(r'(?:\s|[*_：:]|为|是|达到|达|共计|合计|总计|共|大约|约|四舍五入后)*', gap)):
             return None,'指标与数值不是直接陈述，比较或增长等派生结论需单独查询依据'
         if re.match(r'以上|以下|左右之外',tail):
             return None,'不等式或范围陈述暂不能作为精确值通过'
@@ -352,10 +458,12 @@ def _match_claim(claim, unit, sources):
     candidates = [item for item in sources if not refs or item.get('id') in refs]
     reasons=[]; matches=[]
     for item in candidates:
+        if item.get('task_scope_compatible') is False:
+            reasons.append('来源客户范围与原任务不一致'); continue
         for metric in item['statistics'].get('metrics',[]):
             if not metric.get('definition_verified'):
                 reasons.append('来源指标定义无法自动核验，请使用已定义语义指标'); continue
-            if _normalized(metric_name) not in {_normalized(n) for n in metric['names']}:
+            if not time_only and _normalized(metric_name) not in {_normalized(n) for n in metric['names']}:
                 reasons.append('指标名称与来源定义不一致'); continue
             for index,row in enumerate(item.get('rows') or []):
                 if metric['index'] >= len(row): continue
@@ -422,7 +530,10 @@ def _match_claim(claim, unit, sources):
                 scope_text=combined+'\n'+unit.get('scope', '')
                 required=[str(value) for f in filters if f.get('op') not in ('is_null', 'not_null') for value in f.get('values', [f.get('value')])]
                 null_missing=any(f.get('op')=='is_null' and not (any(v in scope_text for v in ('NULL','为空','空值','未登记')) and any(v in scope_text for v in (f['field'], f.get('label') or f['field']))) for f in filters)
-                if any(value not in combined for value in dimensions) or any(value not in scope_text for value in required) or null_missing:
+                # A filter stated once in the report governs every table under it.
+                if (any(value not in combined for value in dimensions)
+                        or any(value not in scope_text and value not in report for value in required)
+                        or null_missing):
                     reasons.append('分组或过滤范围未在回答中明确对应'); continue
                 matches.append({'evidence_id':item.get('id'),'row':index,'column':metric['column'],
                                 'expected_value':str(actual),'source_unit':source_unit,
@@ -444,12 +555,12 @@ def validate_claims(report, evidence, claims, *, units=None):
         unit=by_id.get(claim.unit_id)
         if not unit:
             issues.append('统计声明引用了不存在的回答片段'); continue
-        try: check, issue=_match_claim(claim,unit,sources)
+        try: check, issue=_match_claim(claim,unit,sources,report)
         except (ValueError,ArithmeticError): check,issue=None,'数值、单位或时间格式暂无法核验'
         if issue:
             detail=f"片段 {unit['id']+1}：{issue}；原句「{unit['text'][:220]}」"
             if '指标' in issue:
-                detail+='；保留来源answer_markdown原指标表，删除结论中重复的简称数字；如需另行陈述，使用来源完整指标名和同一人员、基准日及引用，不修改数值或放弃核验'
+                detail+='；核对原指标名、月份、人员及范围；缺少来源时须补查。使用来源answer_markdown完整事实表，不能删除用户要求的数字，不能用“以来源为准”代替数值，也不能修改数值凑通过'
             issues.append(detail)
         else:
             checks.append(check)
@@ -533,11 +644,14 @@ async def check_statistics(report, evidence):
     # Markdown tables have explicit cells and headers: extract them directly,
     # retaining the same value/metric/scope verifier and full-number coverage.
     table_claims = table_claims_for(units, sources)
-    if all(unit['header'] for unit in units):
-        return validate_claims(report, sources, table_claims, units=units)
+    program_claims,program_units = program_statement_claims(units, sources)
+    if all(unit['header'] or unit['id'] in program_units for unit in units):
+        return validate_claims(report, sources, table_claims+program_claims, units=units)
+    # Only the sentences the program did not write go to the model. One bad
+    # extraction can no longer spoil tables that are already read exactly.
+    remaining=[unit for unit in units if not unit['header'] and unit['id'] not in program_units]
     batches=[];batch=[];size=0
-    for unit in units:
-        if unit['header']:continue
+    for unit in remaining:
         count=len(json.dumps(unit,ensure_ascii=False))
         if count>12000:
             return {'status':'unverified','checked_claims':0,'checks':[],
@@ -560,6 +674,6 @@ async def check_statistics(report, evidence):
                 return response.claims
         extracted=await asyncio.gather(*(extract(batch) for batch in batches))
         # 保留原始unit id，非数据库引用片段在验证时也排除。
-        return validate_claims(report,sources,[*table_claims, *[claim for batch in extracted for claim in batch]],units=units)
+        return validate_claims(report,sources,[*table_claims,*program_claims, *[claim for batch in extracted for claim in batch]],units=units)
     except Exception:
         return {'status':'unverified','checked_claims':0,'checks':[],'issues':['统计声明提取未完成，数字、时间和指标未获程序核验'],'detail':'提取服务不可用或输出无效，不按通过处理。'}

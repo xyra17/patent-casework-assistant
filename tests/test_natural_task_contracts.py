@@ -89,7 +89,7 @@ class NaturalTaskContracts(unittest.TestCase):
         with patch('agent.llm.get_llm',side_effect=AssertionError('table claims are deterministic')):
             checked=asyncio.run(check_statistics(result['report'],result['evidence']))
         self.assertEqual(checked['status'],'passed',checked['issues'])
-        self.assertEqual(checked['checked_claims'],10)
+        self.assertEqual(checked['checked_claims'],18)
         for bad in [result['report'].replace('-1 [','99 ['),
                     result['report'].replace('[2026-09-01，2026-11-01)','[2026-08-01，2026-11-01)'),
                     result['report'].replace('实际收案数量变化（件）','实际交局数量变化（件）')]:

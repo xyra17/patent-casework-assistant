@@ -64,7 +64,9 @@ def cases_page(*,query='',owner=None,domain=None,stage=None,client=None,due_fiel
     if missing_date_field not in (None,'received_date','actual_filed_date'):raise ValueError('实际日期未知筛选字段无效')
     filtered=[]
     for case in items:
-        if query and query.lower() not in store.dumps({k:case.get(k) for k in ('case_id','title','client_alias','client_case_id','owner_name','technical_domain')}).lower():continue
+        if parser.CASE_RE.fullmatch(query.strip()):
+            if case['case_id'].upper()!=query.strip().upper():continue
+        elif query and query.lower() not in store.dumps({k:case.get(k) for k in ('case_id','title','client_alias','client_case_id','owner_name','technical_domain')}).lower():continue
         if owner and case.get('owner_name')!=owner:continue
         if domain and canonical_domain(case.get('technical_domain'))!=canonical_domain(domain):continue
         if client and case.get('client_alias')!=client:continue
@@ -85,6 +87,20 @@ def cases_page(*,query='',owner=None,domain=None,stage=None,client=None,due_fiel
     return {'due_group_proofs':group_proofs,'rows':[summary_case(c) for c in filtered[offset:offset+limit]],'total':len(filtered),'offset':offset,'limit':limit,
             'has_more':len(filtered)>offset+limit,'as_of':base.isoformat(),'coverage':store.coverage(),
             'filters':{'query':query,'owner':owner,'domain':domain,'stage':stage,'client':client,'due_field':due_field,'due_status':due_status,'due_statuses':due_statuses,'missing_date_field':missing_date_field}}
+
+
+@store.consistent_read
+def complete_cases_page(*,max_rows=500,**params):
+    """Drain pages in one snapshot; a bounded prefix never claims completeness."""
+    result=cases_page(**{**params,'offset':0,'limit':min(200,max_rows)})
+    rows=list(result['rows']);pages=1
+    while result['total']>len(rows) and len(rows)<max_rows:
+        page=cases_page(**{**params,'offset':len(rows),'limit':min(200,max_rows-len(rows))})
+        if not page['rows']:break
+        rows.extend(page['rows']);pages+=1
+    counts=Counter(row['case_id'] for row in rows)
+    return {**result,'rows':rows,'has_more':len(rows)<result['total'],
+            'pages_read':pages,'duplicate_case_ids':sorted(cid for cid,n in counts.items() if n>1)}
 
 
 def month_bounds(month):

@@ -330,7 +330,7 @@ def _session_dir(thread_id: str) -> str:
 
 
 def _run_dict(row: sqlite3.Row, events: list[dict] | None = None) -> dict:
-    return {
+    run = {
         "thread_id": row["thread_id"],
         "execution_id": row["execution_id"],
         "query": row["query"],
@@ -357,6 +357,9 @@ def _run_dict(row: sqlite3.Row, events: list[dict] | None = None) -> dict:
         "updated_at": row["updated_at"],
         "events": events or [],
     }
+    from tools.result_assessment import assess_result
+    run['result_assessment'] = assess_result(run)
+    return run
 
 
 def list_runs(limit: int = 50, offset: int = 0) -> list[dict]:
@@ -520,4 +523,6 @@ def get_execution(thread_id: str, execution_id: str) -> dict | None:
     if row is None: return None
     result = _loads(row[0], {})
     result['session_dir'] = str(path_utils.get_execution_dir(thread_id, execution_id))
+    from tools.result_assessment import assess_result
+    result['result_assessment'] = assess_result(result)
     return result

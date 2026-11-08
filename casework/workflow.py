@@ -13,6 +13,9 @@ _workload_rank_authorized=ContextVar('department_workload_rank_authorized',defau
 class DepartmentRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
     operation:Literal['archive','cases','case_brief','monthly','meetings','recommend','summary']
+    case_field:Literal['owner_name','client_alias','title','stage','received_date','draft_due_date','client_review_due_date','filing_due_date','actual_filed_date','filing_verified']|None=None
+    case_fields:list[Literal['owner_name','client_alias','title','stage','received_date','draft_due_date','client_review_due_date','filing_due_date','actual_filed_date','filing_verified']]=Field(default_factory=list,max_length=10)
+    meeting_scope:Literal['all','latest']='all'
     query:str=Field(default='',max_length=4000)
     retrieval_query:str=Field(default='',max_length=4000)
     owner:str|None=None
@@ -42,12 +45,14 @@ class DepartmentRequest(BaseModel):
 
     @model_validator(mode='after')
     def supported_parameters(self):
+        if self.case_field and self.case_fields:raise ValueError('单字段和多字段参数不能同时指定')
+        if len(set(self.case_fields))!=len(self.case_fields):raise ValueError('查询字段不能重复')
         common={'operation','requirements','constraints','normalization_events','retrieval_query'}
         fields={
             'summary':set(),
             'archive':{'query','completed_only','result_limit','technical_concepts','archive_kind','archive_intent'},
-            'cases':{'query','owner','stage','domain','client','due_field','due_status','due_statuses','missing_date_field','as_of','filing_month'},
-            'case_brief':{'query','as_of'},
+            'cases':{'query','case_field','case_fields','owner','stage','domain','client','due_field','due_status','due_statuses','missing_date_field','as_of','filing_month'},
+            'case_brief':{'query','as_of','meeting_scope'},
             'monthly':{'start_month','end_month','client','compare_months','missing_date_field'},
             'meetings':{'client','clients','ipr'},
             'recommend':{'query','domain','as_of','technical_concepts','recommendation_mode','archive_intent'},
@@ -115,6 +120,8 @@ def compile_intent(intent,query):
     params=intent.model_dump(exclude={'operation'})
     params['normalization_events']=events
     params['operation']=action_for(intent.requirements,query)
+    if params['operation']=='case_brief':
+        params['meeting_scope']='latest' if re.search(r'最近(?:一次|一场)?会议|最新(?:一次|一场)?会议',query) else 'all'
     if params['operation']=='archive':
         # The model's compact query is a planning hint, never the only copy of
         # the user's subject. A preceding sentence may define what "similar" means.
@@ -156,6 +163,11 @@ def sources_for(request):
 def validate_request(query,request):
     """Preserve explicit case anchors; a month must not erase a single-case check."""
     from casework.parser import CASE_RE
+    if request.case_field or request.case_fields:
+        from casework.execution_policy import field_request
+        expected=field_request(query)
+        if (expected is None or request.model_dump()!=expected.model_dump()):
+            return None
     ids={m.group().upper() for m in CASE_RE.finditer(query)}
     if ids and (request.operation not in ('cases','archive','case_brief') or
                 not ids<={m.group().upper() for m in CASE_RE.finditer(request.query)}):
@@ -247,7 +259,8 @@ def plan_details(request):
            'due_field':'期限节点','due_status':'期限条件','completed_only':'仅按原件完成状态筛选','filing_month':'实际交局归月核对','result_limit':'返回上限'}
     values={'draft_due_date':'初稿／所限','client_review_due_date':'客户送审','filing_due_date':'向局提交',
             'overdue':'在办且已逾期','next14':'在办且近期到期','unknown':'日期未知或冲突'}
-    names.update(due_statuses='期限分组',compare_months='比较各月变化',missing_date_field='实际日期未核实字段')
+    names.update(due_statuses='期限分组',compare_months='比较各月变化',missing_date_field='实际日期未核实字段',
+                 case_field='查询字段',case_fields='查询字段',meeting_scope='会议范围')
     names['technical_concepts']='技术概念与原话'
     if request.recommendation_mode=='workload_only':labels['recommend']='人员在办与期限负荷查询（用户已确认）'
     if request.recommendation_mode=='workload_rank':labels['recommend']='按已知负荷排序的接案候选'
@@ -311,16 +324,29 @@ def case_date_value(row, field):
     return cell(row[field]) if row.get(field) else '未记录'
 
 
+def selected_brief_meetings(meetings,request):
+    rows=meetings['rows']
+    if request.meeting_scope=='latest':
+        latest=max((r['date'] for r in rows if r.get('date')),default=None)
+        rows=[r for r in rows if r.get('date')==latest] if latest else []
+    return {**meetings,'rows':rows}
+
+
 def render(result,request):
     if request.operation=='case_brief':
         ledger=render(result['ledger'],DepartmentRequest(operation='cases',query=request.query))
         archive=render(result['archive'],DepartmentRequest(operation='archive',query=request.query))
         archive=archive.replace('可借鉴机制的原文片段：','本案主要技术（原文节选）：')
         pending=''
-        if any(r.kind=='case_material_gaps' for r in request.requirements):
+        if any(r.kind=='case_material_gaps' or r.kind.startswith('meeting_') for r in request.requirements):
             meetings=result['ledger'].get('case_meetings',{'rows':[],'has_more':False,'evidence_id':''})
-            pending='\n\n## 本案已登记待补材料\n'+render(meetings,DepartmentRequest(operation='meetings',requirements=request.requirements))
-        return ledger+'\n\n'+archive+pending
+            selected=selected_brief_meetings(meetings,request)
+            pending='\n\n## '+('最近有日期的登记会议（同日记录均保留）' if request.meeting_scope=='latest' else '本案全部登记会议与待补材料')+'\n'+render(selected,DepartmentRequest(operation='meetings',requirements=request.requirements))
+            if request.meeting_scope=='latest' and any(not r.get('date') for r in meetings['rows']):
+                pending+='\n另有日期未登记的会议，无法判断其先后，需核验。'
+        from casework.materials import render_packet
+        material_text='\n\n'+render_packet(result['materials'],archive) if result.get('materials') else ''
+        return ledger+'\n\n'+archive+pending+material_text
     synthetic=result.get('coverage',{}).get('data_kind')=='synthetic'
     data_note='（独立模拟资料）' if synthetic else ''
     if request.operation=='summary':
@@ -367,6 +393,26 @@ def render(result,request):
         if result['has_more']:lines.append('仍有未展示的检索候选，可在案件工作台缩小条件继续查看。')
         return '\n'.join(lines)
     if request.operation=='cases':
+        if request.case_field or request.case_fields:
+            from casework.execution_policy import FIELD_LABELS
+            selected=request.case_fields or [request.case_field]
+            lines=['（模拟办理信息）'] if synthetic else []
+            for row in result['rows']:
+                for field in selected:
+                    value=case_date_value(row,field)
+                    lines.append(row['case_id']+' 的'+FIELD_LABELS[field]+'：'+value+f"。[{result['evidence_id']}]")
+                    if row.get('field_provenance_evidence_id'):
+                        lines.append('原件字段出处：'+f"[{row['field_provenance_evidence_id']}]")
+                    for candidate in row.get('conflicting_candidates',{}).get(field,[]):
+                        lines.append('冲突记录：'+cell(candidate['value'])+'（'+cell(candidate['path'])+'，'+cell(candidate['location'])+'）'+f"。[{row['conflict_evidence_id']}]")
+            if not result['rows']:lines.append('当前接入资料未找到该案件。'+f"[{result['evidence_id']}]")
+            return '\n'.join(lines)
+        if result.get('answer_markdown') and (request.due_status or request.due_statuses):
+            sections=[result['answer_markdown']]
+            if result.get('unknown_due_answer_markdown'):
+                sections.append(result['unknown_due_answer_markdown'])
+            if result.get('unknown_due_has_more'):sections.append('日期未知清单仍有未展示记录，不能视为完整清单。')
+            return '\n\n'.join(sections)
         dates = requested_case_dates(request)
         if dates:
             lines = []
@@ -506,7 +552,7 @@ async def execute(request,thread_id,round_num,required_sources):
     if request.operation=='recommend' and request.recommendation_mode=='technical':
         require_scope(request.archive_intent,request.query,request.model_dump())
     context.set_round(round_num);context.reset_tool_budget()
-    params=request.model_dump(exclude_none=True,exclude={'completed_only','archive_kind','archive_intent','filing_month','result_limit','requirements','constraints','normalization_events','technical_concepts','recommendation_mode','retrieval_query'})
+    params=request.model_dump(exclude_none=True,exclude={'case_field','case_fields','meeting_scope','completed_only','archive_kind','archive_intent','filing_month','result_limit','requirements','constraints','normalization_events','technical_concepts','recommendation_mode','retrieval_query'})
     if request.operation!='monthly':params.pop('compare_months',None)
     if request.operation=='archive':
         scope=request.archive_intent if request.archive_intent!=ArchiveIntent() else bind_intent(request.query)
@@ -518,17 +564,21 @@ async def execute(request,thread_id,round_num,required_sources):
         params['limit']=min(30,max(6,request.result_limit or 6))
         if any(c.kind=='lexical_only' for c in request.constraints):params['allow_vector']=False
     if request.operation=='recommend' and request.recommendation_mode=='workload_rank':params['recommendation_mode']='workload_rank'
-    if request.operation=='cases':params['limit']=100
+    if request.operation=='cases':params.update(limit=100,complete=True)
     if request.operation=='cases' and any(r.kind=='case_list' and re.search(r'多少|数量|几[件个]',r.quote) for r in request.requirements):params['include_count']=True
     tool=search_case_archive if request.operation=='archive' else query_department_cases
     run_id=f'department:{thread_id}:{round_num}'
     calls=[('result',tool,params)] if request.operation!='case_brief' else [
         ('ledger',query_department_cases,{'operation':'cases','query':request.query,'as_of':request.as_of}),
         ('archive',search_case_archive,{'query':request.query,'limit':1})]
+    if request.operation=='case_brief':
+        from casework.materials import collect_case_materials
+        calls.append(('materials',collect_case_materials,{'case_id':request.query}))
     loop=asyncio.get_running_loop()
     def read_tools():
         results={}
         with store.read_snapshot():
+            snapshot_version=store.published_version()
             for key,read_tool,args in calls:
                 event={'agent_name':'部门业务流程','agent_run_id':run_id,'round':round_num,
                        'run_id':run_id+':'+key,'tool_name':read_tool.name}
@@ -536,7 +586,8 @@ async def execute(request,thread_id,round_num,required_sources):
                     asyncio.run_coroutine_threadsafe(monitor.report(thread_id,kind,message,data),loop).result(timeout=10)
                 report('tool_start','按已确认计划查询部门业务事实',{**event,'args':args})
                 try:
-                    raw=read_tool.invoke(args)
+                    from casework.read_cache import invoke
+                    raw=invoke(read_tool,args)
                     results[key]=json.loads(raw)
                 except Exception as exc:
                     report('tool_error','部门只读查询未完成',{**event,'error':str(exc)})
@@ -545,13 +596,14 @@ async def execute(request,thread_id,round_num,required_sources):
                 if (key=='result' and request.operation=='recommend' and request.recommendation_mode=='technical'
                         and analytics.recommendation_needs_confirmation(results[key])):
                     calls.append(('technical_lookup',search_case_archive,{'query':request.query,'limit':6}))
+        results['_snapshot_version']=snapshot_version
         return results
     token=_workload_rank_authorized.set(request.operation=='recommend' and request.recommendation_mode=='workload_rank' and any(c.kind=='workload_basis' for c in request.constraints))
     try:
         results=await asyncio.to_thread(read_tools)
     finally:
         _workload_rank_authorized.reset(token)
-    result=results if request.operation=='case_brief' else results['result']
+    result={k:v for k,v in results.items() if not k.startswith('_')} if request.operation=='case_brief' else results['result']
     if request.operation=='archive' and request.archive_kind is None:
         from casework.archive_selection import select_candidates
         result=await select_candidates(result,request.retrieval_query or request.query,intent=scope)
@@ -573,6 +625,7 @@ async def execute(request,thread_id,round_num,required_sources):
             'business_check':checked,
             'business_delivery':delivery(request,result),
             'execution_contract':{'mode':'fixed_read_only','tools':[t.name for _,t,_ in calls],
+                                  'snapshot_version':results['_snapshot_version'],'read_schedule':'sequential_same_snapshot',
                                   'executed_sources':sources_for(request),'allowed_sources':required_sources,
                                   'source_files_written':False,'assignment_saved':False,'artifacts_created':False,
                                   'candidate_detail_entry':'案件工作台／辅助分案'},

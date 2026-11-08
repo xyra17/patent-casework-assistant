@@ -45,6 +45,7 @@ def add(thread_id: str | None, item: dict[str, Any]) -> str:
                 "completeness": item.get("completeness"),
                 "statistics": item.get("statistics"),
                 "answer_contract": item.get("answer_contract"),
+                "date_completeness": item.get("date_completeness"),
                 "table_scope": {key: item.get(key) for key in ("total_rows", "matched_rows", "result_rows", "group_by", "offset", "limit", "truncated")},
                 "effective_bindings": item.get("effective_bindings"),
                 "url": item.get("url"),

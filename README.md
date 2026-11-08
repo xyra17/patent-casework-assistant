@@ -22,50 +22,44 @@
 | 部门统计与汇报 | “9 月和 10 月各收了多少案、实际交局多少件？” | 按实际日期核对数量和明细；按任务需要生成图表或报告 |
 | 辅助分案 | “谁办过类似技术？他们手头的案量和近期期限怎样？” | 提供有原文依据的经历、登记负荷和期限，供负责人决定 |
 
-“案件”页面适合按已有口径查资料；会话入口可以处理附件、跨来源比较和报告任务。固定流程也可能查多个来源、分几步完成。需求超出已有流程时，DeepAgents 才在获准的数据源和预算内决定后续查询。两条路径都受本次任务的数据源设置约束。
+“案件”页面适合按已有口径查资料；会话入口可以处理附件、跨来源比较和报告任务。明确字段由程序直接查询，固定任务按预定步骤执行，需要动态探索的任务由 DeepAgents 根据返回结果选择下一步。所有执行策略都受本次任务的数据源设置约束。
+
+## 业务全景
+
+![业务全景：使用者、案件任务、资料接入、结果交付与人工办理](docs/diagrams/00-business-overview.svg)
 
 ## 系统结构
 
-![Patent Casework Assistant 系统架构：交互、任务路由、两条执行路径与共同证据出口](docs/diagrams/01-system-architecture.svg)
+![系统组件架构：工作台、Python 后端、执行器、任务级缓存、模型与存储](docs/diagrams/01-system-architecture.svg)
 
-两条执行路径都会记录来源编号、原文位置和版本。固定流程由程序确定查询参数并核验业务事实；开放任务由 Agent 选择工具，发现证据不足时在预算内补查或修正。图展示主要关系，具体边界见[固定流程与 Agent 执行](docs/execution-boundaries.md)和[来源权限](docs/task-source-selection.md)。
+后端在同一个 FastAPI 应用内组织任务，固定业务执行器与 DeepAgents 共享数据访问、来源记录和文件工具。同一任务已取得且版本一致的案件资料可以复用；会前准备按案收集材料清单与已发布正文。具体实现见[任务执行](docs/execution-boundaries.md)和[来源权限](docs/task-source-selection.md)。
 
 ### 固定流程与 Agent 如何分工
 
-| 执行路径 | 谁决定下一步 | 适合的任务 |
+| 执行策略 | 谁决定下一步 | 适合的任务 |
 | --- | --- | --- |
-| 固定业务流程 | 程序将已支持的需求编译为受限参数，按既定规则查询、计算和核验 | 查指定案件信息、逐场会议、明确月份的收案与交局统计 |
-| Agent 会话任务 | DeepAgents 在允许的数据源和执行预算内，根据已取得的结果选择后续工具与查询 | 阅读附件后比较旧案、跨来源补查、整理报告 |
+| 直接查询 | 完整句式匹配后，由程序取数并输出 | 同一案件的负责人、阶段和多个期限字段 |
+| 固定流程 | 程序按既定步骤读取和计算，模型按需理解或整理 | 期限排查、月度统计、固定会前卡 |
+| 固定流程加条件分支 | 固定读取起步，再按结果筛选、补查或澄清 | 相似案件查找、辅助分案 |
+| Agent 动态执行 | DeepAgents 根据已取得的结果选择后续工具，按需委派子智能体 | 阅读附件后比较旧案、跨来源分析、整理报告 |
 
-任务模式和工具调用次数不能单独说明走了哪条路径。程序会检查已有流程能否覆盖完整需求，并核对所需数据源是否开放；缺少资料或关键条件时，结果会说明缺口，必要时请用户补充。
+这四种策略共享执行设施，不是依次经过的四层。程序按完整需求和已开放来源选择策略；缺少资料或关键条件时，保留缺口并请用户补充。
 
-### 一次会话如何返回结果
+<details>
+<summary>展开：任务执行流程</summary>
 
-```mermaid
-sequenceDiagram
-    actor User as 用户
-    participant UI as Vue 工作台
-    participant API as FastAPI
-    participant Run as 后台任务
-    participant Data as 获准的数据源
-    participant Store as 会话 SQLite
+![四种执行策略、用户补充、有界修正与结果交付](docs/diagrams/02-routing-and-execution.svg)
 
-    User->>UI: 提交问题与数据源设置
-    UI->>API: 建立 WebSocket 连接
-    UI->>API: POST /api/task
-    API->>Store: 创建执行记录
-    API->>Run: 启动任务
-    API-->>UI: 返回 thread_id 与 execution_id
-    Run->>Run: 路由并选择固定流程或 Agent
-    Run->>Data: 执行受限查询或工具调用
-    Data-->>Run: 返回结果与来源证据
-    Run->>Run: 核验事实、引用与交付要求
-    Run->>Store: 保存事件、证据与结果
-    API-->>UI: WebSocket 推送进度与结果
-    UI-->>User: 展示回答、来源和执行状态
-```
+</details>
 
-前端先连 WebSocket，再提交任务。后台将执行事件存入应用 SQLite；连接中断后，前端可读取运行记录恢复状态。如果统计口径等关键条件不清楚，任务会暂停，等用户补充后再执行。
+<details>
+<summary>展开：任务运行时序</summary>
+
+![任务提交、执行、资料复用、持久化与事件推送时序](docs/diagrams/04-task-sequence.svg)
+
+前端先连 WebSocket，再提交任务。后台先持久化执行事件，再推送进度；连接中断后，前端可读取运行记录恢复显示。关键条件不清楚时，任务等待用户补充。
+
+</details>
 
 ### 数据放在哪里
 
@@ -78,20 +72,18 @@ sequenceDiagram
 
 案卷和公司文档分别建索引，检索范围也各自独立。
 
-<details>
-<summary>展开：任务路由与核验图</summary>
+### 文件如何进入结果
 
-![来源权限、固定流程、Agent 执行与结果核验](docs/diagrams/02-routing-and-execution.svg)
+<details>
+<summary>展开：文档入库与在线检索</summary>
+
+![共享盘入库、案卷与公司文档检索、按案材料收集及版本复用](docs/diagrams/03-ingestion-and-retrieval.svg)
 
 </details>
 
-### 文件如何进入结果
-
-![共享盘解析、案卷正文和普通知识库的两条检索路径](docs/diagrams/03-ingestion-and-retrieval.svg)
-
 共享盘原件按白名单只读扫描；案件信息与会议字段保留候选值及冲突，案卷正文保存分块、位置、哈希和解析版本。当前案卷召回使用本地 **Qwen3-Embedding-0.6B + BM25**，条件满足时使用 **bge-reranker-base** 重排；普通知识库独立维护 Chroma 与词法索引。向量不可用时，部分查询可退回词法路径并显示状态。
 
-文本 PDF 优先读取原生文字；扫描页、图片和复杂版面按配置使用本地 MinerU 解析。纯图形可由单独的视觉工具观察。详见[文档解析](docs/document-parsing.md)。三张图的可编辑源和生成命令见[图稿说明](docs/diagrams/README.md)。
+文本 PDF 优先读取原生文字；扫描页、图片和复杂版面按配置使用本地 MinerU 解析。纯图形可由单独的视觉工具观察。详见[文档解析](docs/document-parsing.md)。五张图的 SVG、PNG、Mermaid 源及生成命令见[图稿说明](docs/diagrams/README.md)。
 
 ## 运行演示
 

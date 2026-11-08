@@ -71,13 +71,22 @@ def quote_options(item, limit=6):
 
 def fact_block(item):
     """All workload metrics, definitions and limitations travel as one unit."""
+    if item.get('answer_contract_applicable') is False:
+        return ''
     contract = item.get('answer_contract') or {}
     if contract.get('kind') == 'due_case_list' and contract.get('version') == 1:
         columns=item.get('columns') or []
         rows=item.get('rows') or []
-        required=['所编号','代理师',{'draft_due_date':'初稿期限／所限',
-                                  'client_review_due_date':'客户送审期限',
-                                  'filing_due_date':'向局提交期限'}.get(contract.get('due_field'))]
+        due_labels={'draft_due_date':'初稿期限／所限','client_review_due_date':'客户送审期限',
+                    'filing_due_date':'向局提交期限'}
+        if contract.get('due_field') not in due_labels:
+            raise ValueError('期限字段无效')
+        # Carry every planned date the source actually has, so the reader sees the
+        # whole schedule and not only the field that was filtered on.
+        dates=[label for label in due_labels.values() if label in columns]
+        if due_labels[contract['due_field']] not in dates:
+            dates=[due_labels[contract['due_field']]]
+        required=['所编号','代理师',*dates]
         if (not contract.get('complete_snapshot') or not all(label in columns for label in required)
                 or len(rows) != contract.get('total')):
             raise ValueError('期限全量清单缺少完整来源行')
@@ -86,15 +95,15 @@ def fact_block(item):
         if not status:
             raise ValueError('期限全量清单状态无效')
         indices=[columns.index(label) for label in required]
-        lines=[f"### {status}：完整案号与承办人（基准日 {contract['as_of']}，共 {len(rows)} 件）",'',
-               '| 所编号 | 承办人 | '+required[2]+' | 来源 |',
-               '| --- | --- | --- | --- |']
+        lines=[f"### {status}：完整案号、承办人与计划期限（基准日 {contract['as_of']}，共 {len(rows)} 件）",'',
+               '| 所编号 | 承办人 | '+' | '.join(dates)+' | 来源 |',
+               '|'+' --- |'*(len(dates)+3)]
         for row in rows:
             values=[str(row[index] if row[index] is not None else '未核实').replace('|','&#124;')
                     for index in indices]
             lines.append('| '+' | '.join(values)+f" | [{item['id']}] |")
         if not rows:
-            lines.append(f"本次对当前完整发布快照中的在办案件筛选返回0行；该项无案号或承办人可列。[{item['id']}]")
+            return ''
         return '\n'.join(lines)
     if contract.get('kind')=='monthly_report' and contract.get('version')==1:
         return contract.get('body','')
@@ -149,6 +158,52 @@ def fact_block(item):
     if contract.get('excluded_case_ids'):
         lines += ['同案号重复记录已排除，未计为零负荷：'+'、'.join(contract['excluded_case_ids'])+'。']
     return '\n'.join(lines)
+
+
+def bind_task_scope(query, items):
+    """Retain every source; only applicable contracts may be forced into an answer."""
+    from tools.task_evidence_checks import requested_client, metric_client
+    from casework.routing import months
+    client = requested_client(query, items)
+    selected_months = months(query) if re.search(r'每月|各月|月报|月度|统计', query) else []
+    lookup = {item.get('id'): item for item in items}
+    result = []
+    for original in items:
+        item = dict(original)
+        metrics = (item.get('statistics') or {}).get('metrics') or []
+        monthly = [metric for metric in metrics if metric.get('time', {}).get('field')
+                   in ('received_date','actual_filed_date')]
+        if client and monthly and not any(metric_client(metric) == client for metric in monthly):
+            item['task_scope_compatible'] = False
+        if (client and selected_months and metrics
+                and not any(metric_client(metric) == client for metric in metrics)
+                and not any(dim.get('column') in ('client','client_alias')
+                            for dim in (item.get('statistics') or {}).get('dimensions', []))):
+            item['task_scope_compatible'] = False
+        date_proof = item.get('date_completeness') or {}
+        if client and date_proof:
+            proof_client = metric_client(date_proof)
+            if proof_client != client:
+                item['task_scope_compatible'] = False
+        contract = item.get('answer_contract') or {}
+        if contract.get('kind') == 'monthly_report':
+            actual_client = contract.get('client')
+            if 'client' not in contract:
+                try:
+                    refs = json.loads(item.get('snippet') or '{}').get('input_evidence_ids', [])
+                except (ValueError, TypeError, AttributeError):
+                    refs = []
+                clients = {metric_client(m) for sid in refs
+                           for m in (lookup.get(sid, {}).get('statistics') or {}).get('metrics', [])}
+                if len(clients) == 1:
+                    actual_client = next(iter(clients))
+            mismatch = client and actual_client != client
+            if selected_months:
+                mismatch = mismatch or (contract.get('start_month'), contract.get('end_month')) != (min(selected_months), max(selected_months))
+            if mismatch:
+                item['answer_contract_applicable'] = False
+        result.append(item)
+    return result
 
 
 def fact_token(item):
@@ -228,6 +283,7 @@ def workload_delivery_issues(query, items):
 
 def render_answer(report, items, query=''):
     """Fail closed on stale selectors; never guess a source or rewrite a claim."""
+    items = bind_task_scope(query, items) if query else items
     lookup = {item.get('id'): item for item in items}
     audit = []
     selectors = {option['selector_id']: (item, option)
@@ -284,7 +340,7 @@ def render_answer(report, items, query=''):
                 block = fact_block(item)
             except ValueError:
                 continue
-            if block and block not in report:
+            if block and block not in report and not _equivalent_fact_block(block, report):
                 report += '\n\n' + block
                 audit.append({'kind': 'facts', 'evidence_id': item['id'],
                               'fingerprint': fingerprint(item), 'inserted_missing_block': True})
@@ -326,9 +382,8 @@ def render_answer(report, items, query=''):
         # those rows for the delivery instead of carrying stale model selectors
         # or a partial preview into an otherwise complete answer.
         if (re.search(r'初稿.{0,50}(?:逾期|两周|14天)',query)
-                and re.search(r'案号|所编号',query)
-                and re.search(r'承办人|代理师',query)):
-            sources=_complete_due_sources(items)
+                and re.search(r'案号|所编号',query)):
+            sources=_complete_due_sources(items, query)
             requested=[status for status,pattern in (('overdue',r'逾期'),
                         ('next14',r'两周|14天'),('unknown',r'没填|未填|缺失|未知'))
                        if re.search(pattern,query)]
@@ -342,7 +397,11 @@ def render_answer(report, items, query=''):
                               'due_field':'draft_due_date',
                               'as_of':(item.get('answer_contract') or {}).get('as_of') or
                                       __import__('datetime').date.today().isoformat()}
-                    parts.append(fact_block({**item,'answer_contract':contract}))
+                    block = fact_block({**item,'answer_contract':contract})
+                    if not block:
+                        label = {'overdue':'初稿已逾期','next14':'初稿未来两周到期','unknown':'初稿期限未知'}[status]
+                        block = f"### {label}\n\n本组无符合记录。[{item['id']}]"
+                    parts.append(block)
                     audit.append({'kind':'due_full_list','evidence_id':item['id'],'rows':len(item['rows'])})
                 from datetime import date,timedelta
                 base=date.fromisoformat(contract['as_of'])
@@ -351,8 +410,104 @@ def render_answer(report, items, query=''):
                        f"初稿逾期为期限早于{base.isoformat()}；未来两周为[{base.isoformat()}，"
                        f"{(base+timedelta(days=14)).isoformat()})，含起日、不含结束日；"
                        f"未填组查询初稿期限为空或冲突的记录。{refs}")
-                report=scope+'\n\n'+'\n\n'.join(parts)
+                full_block=_full_active_block(items, sources) if re.search(r'全部|所有|全量|在办',query) else ''
+                other_blocks = [fact_block(item) for item in items
+                    if (item.get('answer_contract') or {}).get('kind') == 'workload']
+                report=scope+'\n\n'+(full_block+'\n\n' if full_block else '')+'\n\n'.join(parts + other_blocks)
+    # A bounded monthly query asks for these source-owned numbers and event
+    # identities, not a second free-form transcription of the same facts.
+    # Preserve general/mixed tasks; only a complete applicable monthly body
+    # may replace prose, and normal verification still runs on that exact body.
+    monthly = [item for item in items if item.get('answer_contract_applicable') is not False
+               and (item.get('answer_contract') or {}).get('kind') == 'monthly_report']
+    if (monthly and re.search(r'统计|每月|各月|月报', query)
+            and re.search(r'收案|交局', query) and re.search(r'案号|明细|清单', query)
+            and re.search(r'实际日期|对应.*日期|日期', query)
+            and not re.search(r'技术|相似|会议|推荐|PDF|Markdown|图表|为什么', query, re.I)):
+        from tools.task_evidence_checks import task_evidence_issues
+        selected = monthly[-1]
+        body = fact_block(selected)
+        if ('| 事件指标 | 所编号 | 实际日期 |' in body
+                and ('收案日期缺失' not in query or '实际收案日期缺失数量' in body)
+                and not task_evidence_issues(query, items)):
+            report = body
+            audit.append({'kind':'monthly_structured_delivery','evidence_id':selected['id'],
+                          'replaced_freeform':True,'basis':'same_scope_verified_metrics_and_actual_event_rows'})
+    # A model may copy the text beside its quote selector. Expansion must not
+    # duplicate that same bound quotation in the user-facing answer.
+    from tools.evidence_refs import _quote_supported
+    pattern = re.compile(r'(?P<quote>“(?P<text>[^”\n]{12,})”)\s*(?P=quote)(?P<refs>(?:\s*\[S[1-9]\d*\])+)' )
+    def collapse(match):
+        refs = re.findall(r'\[(S\d+)\]', match['refs'])
+        if not any(item.get('id') in refs and _quote_supported(match['text'], item.get('snippet', '')) for item in items):
+            return match[0]
+        audit.append({'kind': 'duplicate_bound_quote', 'evidence_ids': list(dict.fromkeys(refs))})
+        return match['quote'] + ''.join('[' + sid + ']' for sid in dict.fromkeys(refs))
+    report = pattern.sub(collapse, report)
     return report, audit
+
+
+def _full_active_block(items, scope_sources):
+    """One complete in-progress list with all three planned dates, if available."""
+    from casework import analytics
+    scope_keys = ('query', 'owner', 'client', 'domain', 'stage')
+    def filters(item):
+        try:
+            value = json.loads(item.get('snippet') or '{}')
+            return value if isinstance(value, dict) else None
+        except (ValueError, TypeError):
+            return None
+    selected = list(scope_sources.values())
+    if not selected or any(filters(item) is None for item in selected):
+        return ''
+    expected = {key: filters(selected[0]).get(key) or None for key in scope_keys}
+    if any(any((filters(item).get(key) or None) != expected[key] for key in scope_keys) for item in selected):
+        return ''
+    as_of = (selected[0].get('answer_contract') or {}).get('as_of')
+    if not as_of:
+        return ''
+    base = analytics.as_date(as_of)
+    best=None
+    for item in items:
+        cols=item.get('columns') or []
+        rows=item.get('rows') or []
+        proof=item.get('completeness') or {}
+        source_filters = filters(item)
+        if (not item.get('casework') or source_filters is None
+                or any(source_filters.get(k) for k in ('due_field','due_status','due_statuses','missing_date_field'))
+                or any((source_filters.get(key) or None) != expected[key] for key in scope_keys)):
+            continue
+        if not rows or proof.get('has_more') or proof.get('fetch_truncated'):
+            continue
+        if proof.get('query_rows') != len(rows):
+            continue
+        if not all(label in cols for label in ('所编号','代理师','初稿期限／所限',
+                                               '客户送审期限','向局提交期限','案件状态','实际交局日期','交局已核实')):
+            continue
+        if item.get('type')!='database':
+            continue
+        def is_active(row):
+            return analytics.active({'stage':row[cols.index('案件状态')],
+                'actual_filed_date':row[cols.index('实际交局日期')],
+                'filing_verified':row[cols.index('交局已核实')]}, base)
+        rows = [row for row in rows if is_active(row)]
+        if best is None or len(rows)>len(best[1]):
+            best=(item,rows)
+    if not best:
+        return ''
+    item,rows=best
+    cols=item['columns']
+    indices=[cols.index(label) for label in ('所编号','代理师','初稿期限／所限',
+                                             '客户送审期限','向局提交期限')]
+    lines=['### 全部在办案件与三项计划期限','',
+           '| 所编号 | 承办人 | 初稿期限／所限 | 客户送审期限 | 向局提交期限 | 来源 |',
+           '| --- | --- | --- | --- | --- | --- |']
+    for row in rows:
+        values=[str(row[index] if row[index] is not None else '未核实').replace('|','&#124;')
+                for index in indices]
+        lines.append('| '+' | '.join(values)+f" | [{item['id']}] |")
+    lines.append(f"共 {len(rows)} 件，本表覆盖本次筛选范围内、基准日{as_of}的全部已知在办案件。[{item['id']}]")
+    return '\n'.join(lines)
 
 
 def append_case_date_provenance(report, items, query):
@@ -397,7 +552,7 @@ def case_date_provenance_issues(query, report, items):
     return ['三项计划期限的原件出处尚未完整交付：须逐字段列明原件值、状态、路径和位置。'] if audit else []
 
 
-def _complete_due_sources(items):
+def _complete_due_sources(items, query=''):
     """Return only complete, unambiguous draft-deadline result sets."""
     found={}
     for item in items:
@@ -453,14 +608,72 @@ def _complete_due_sources(items):
                         'completeness':{**proof,'query_rows':len(subset)},
                         'answer_contract':{'as_of':base.isoformat()}})
             break
+    # A complete owner-filtered case table already contains the three dates.
+    # Derive groups from those actual rows instead of asking the model to copy
+    # workload counts without the corresponding case IDs. Never use a preview.
+    from casework import analytics
+    from casework.entities import aliases, normalize
+    from casework.routing import dates
+    requested_dates = dates(query)
+    workloads = [item for item in items if (item.get('answer_contract') or {}).get('kind') == 'workload']
+    anchors = workloads + ([None] if requested_dates and '基准' in query else [])
+    for workload in anchors:
+        contract = (workload or {}).get('answer_contract') or {}
+        if workload is not None and not contract.get('as_of'):
+            continue
+        base = analytics.as_date(contract.get('as_of') or requested_dates[0])
+        if requested_dates and requested_dates[0] != base.isoformat():
+            continue
+        for item in items:
+            try:
+                filters = json.loads(item.get('snippet') or '{}')
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(filters, dict) or not filters.get('owner'):
+                continue
+            owner = filters['owner']
+            if not any(alias in normalize(query) for alias in aliases(owner, 'owner')):
+                continue
+            dims = ((workload or {}).get('statistics') or {}).get('dimensions') or []
+            owner_dim = next((dim for dim in dims if dim.get('column') == 'owner_name'), None)
+            workload_rows = (workload or {}).get('rows') or []
+            if workload is not None and (not owner_dim or len(workload_rows) != 1
+                    or len(workload_rows[0]) <= owner_dim['index']
+                    or workload_rows[0][owner_dim['index']] != owner):
+                continue
+            if any(filters.get(key) and normalize(str(filters[key])) not in normalize(query)
+                   for key in ('query','client','domain','stage')):
+                continue
+            columns, rows = item.get('columns') or [], item.get('rows') or []
+            proof = item.get('completeness') or {}
+            if (not item.get('casework') or item.get('type') != 'database'
+                    or proof.get('has_more') or proof.get('fetch_truncated')
+                    or proof.get('query_rows') != len(rows)
+                    or any(filters.get(k) for k in ('due_field','due_status','due_statuses','missing_date_field'))
+                    or not all(label in columns for label in ('所编号','代理师','初稿期限／所限',
+                        '客户送审期限','向局提交期限','案件状态','实际交局日期','交局已核实'))):
+                continue
+            def active(row):
+                return row[columns.index('代理师')] == owner and analytics.active({
+                    'stage':row[columns.index('案件状态')],
+                    'actual_filed_date':row[columns.index('实际交局日期')],
+                    'filing_verified':row[columns.index('交局已核实')]}, base)
+            from casework.requirements import due_group
+            active_rows = [row for row in rows if active(row)]
+            for status in ('overdue','next14','unknown'):
+                subset = [row for row in active_rows if due_group(row[columns.index('初稿期限／所限')], base.isoformat()) == status]
+                found.setdefault(status, {**item, 'rows':subset,
+                    'completeness':{**proof,'query_rows':len(subset)},
+                    'answer_contract':{'as_of':base.isoformat()}})
+            return found
     return found
 
 
 def append_complete_due_lists(report, items, query=''):
     """Deliver rows already fetched for an explicit case-and-owner list request."""
-    if not re.search(r'初稿.{0,50}(?:逾期|两周|14天)', query) or not re.search(r'案号|所编号',query) or not re.search(r'承办人|代理师',query):
+    if not re.search(r'初稿.{0,50}(?:逾期|两周|14天)', query) or not re.search(r'案号|所编号',query):
         return report, []
-    sources=_complete_due_sources(items)
+    sources=_complete_due_sources(items, query)
     requested=[status for status,pattern in (('overdue',r'逾期'),('next14',r'两周|14天'),('unknown',r'没填|未填|缺失|未知'))
                if re.search(pattern,query)]
     audit=[]
@@ -490,6 +703,55 @@ def append_complete_due_lists(report, items, query=''):
     return report,audit
 
 
+def _cells(line): return [part.strip() for part in re.split(r'(?<!\\)\|', line.strip().strip('|'))]
+
+
+def _fact_block_cells(block):
+    """Return the data rows of a fact block's first Markdown table."""
+    lines=[line for line in block.splitlines()]
+    table=[line for line in lines if line.strip().startswith('|')]
+    if len(table)<2:return []
+    rows=[]
+    for line in table[1:]:
+        if re.fullmatch(r'[\s|:\-]+', line.strip()):continue
+        rows.append([cell.strip() for cell in _cells(line)])
+    return rows
+
+
+def _equivalent_fact_block(block, report):
+    """Ignore layout, never field labels, values, scope or duplicate rows."""
+    from collections import Counter
+    def cell(value):
+        return re.sub(r'\s+', ' ', value.replace('**', '').strip())
+    def tables(text):
+        lines = text.splitlines()
+        for i in range(len(lines)-1):
+            if not lines[i].strip().startswith('|') or not re.fullmatch(r'[\s|:\-]+', lines[i+1]):
+                continue
+            headers = [cell(v) for v in _cells(lines[i])]
+            if len(set(headers)) != len(headers):
+                continue
+            rows = []
+            for line in lines[i+2:]:
+                if not line.strip().startswith('|'):
+                    break
+                values = [cell(v) for v in _cells(line)]
+                if len(values) != len(headers):
+                    break
+                rows.append(tuple(sorted(zip(headers, values))))
+            yield frozenset(headers), Counter(rows)
+    expected = list(tables(block))
+    actual = list(tables(report))
+    if not expected or any(t not in actual for t in expected):
+        return False
+    # Keep every non-table definition/limitation, including the base date and
+    # empty/unknown scope. Whitespace reflow is harmless; changed meaning is not.
+    normalize = lambda text: re.sub(r'\s+', '', text.replace('**', ''))
+    body = normalize(report)
+    return all(normalize(line) in body for line in block.splitlines()
+               if line.strip() and not line.strip().startswith('|'))
+
+
 def contract_issues(report, items):
     issues = []
     if re.search(r'\{\{(?:quote|facts):', report):
@@ -502,6 +764,11 @@ def contract_issues(report, items):
         except ValueError as exc:
             issues.append(str(exc))
             continue
-        if block and block not in report:
-            issues.append(f"事实块缺失或被改写：请原样使用{fact_token(item)}；须一起保留数值、日期、范围、未知和口径")
+        if not block:
+            continue
+        if block in report:
+            continue
+        if _equivalent_fact_block(block, report):
+            continue
+        issues.append(f"事实块缺失或被改写：请原样使用{fact_token(item)}；须一起保留数值、日期、范围、未知和口径")
     return issues

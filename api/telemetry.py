@@ -73,3 +73,28 @@ class ModelTelemetry(BaseCallbackHandler):
 
 
 model_telemetry = ModelTelemetry()
+
+
+def summarize(decisions):
+    """Count provider completions once; never double-count model_usage mirrors."""
+    calls={row['call_id']:row for row in decisions
+           if row.get('event')=='model_call_end' and row.get('call_id')}
+    stages={}
+    for row in decisions:
+        if row.get('event')=='stage_timing':
+            stage=row['stage']
+            stages[stage]=stages.get(stage,0)+row.get('elapsed_seconds',0)
+    usage=[c['usage'] for c in calls.values() if c.get('usage_available') and c.get('usage')]
+    return {'schema_version':1,'model_calls':len(calls),
+        'model_errors':sum(c.get('status')=='error' for c in calls.values()),
+        'provider_seconds_sum':sum(c.get('elapsed_seconds',0) for c in calls.values()),
+        'provider_time_scope':'累计调用耗时；并行时不能当作任务墙钟耗时',
+        'usage_available_calls':len(usage),
+        'input_tokens':sum(u.get('input_tokens') or 0 for u in usage),
+        'output_tokens':sum(u.get('output_tokens') or 0 for u in usage),
+        'total_tokens':sum(u.get('total_tokens') or 0 for u in usage),
+        'usage_complete':len(usage)==len(calls),
+        'cache_hits':sum(d.get('event')=='tool_cache_hit' for d in decisions),
+        'stages_seconds':stages,'human_active_seconds':None,
+        'human_verification_seconds':None,'currency_cost':None,
+        'scope':'任务内部执行记录；不含真人核验，不等于任务准确率或供应商账单。'}

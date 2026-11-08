@@ -31,7 +31,7 @@ def unresolved(result,mode,detail):
                                 'scope':'仅本次召回的局部原文，不保证全库完整性'}}
 
 
-async def classify_relations(result,query,intent,model_factory,*,strict=False):
+async def classify_relations(result,query,intent,model_factory,*,strict=False,_allow_parallel=True):
     """Classify full passages; core evidence is required only for adoption/topic."""
     documents=[]
     for case in result['results']:
@@ -41,9 +41,11 @@ async def classify_relations(result,query,intent,model_factory,*,strict=False):
     payload=json.dumps({'query':query,'scope':intent.mode,'documents':documents},ensure_ascii=False)
     if len(payload)>9000 and len(documents)>1:
         middle=len(documents)//2
-        batches=[]
-        for rows in (result['results'][:middle],result['results'][middle:]):
-            batches.append(await classify_relations({**result,'results':rows},query,intent,model_factory,strict=strict))
+        from casework.parallel import independent_pair
+        batches=await independent_pair(
+            lambda:classify_relations({**result,'results':result['results'][:middle]},query,intent,model_factory,strict=strict,_allow_parallel=False),
+            lambda:classify_relations({**result,'results':result['results'][middle:]},query,intent,model_factory,strict=strict,_allow_parallel=False),
+            enabled=_allow_parallel)
         incomplete=[b['selection_review'] for b in batches if b['selection_review']['status']!='passed']
         return {**result,'results':sorted([c for b in batches for c in b['results']],key=lambda c:RELATION_ORDER[c['relevance']['relation']]),
                 'selection_review':{'status':'unverified' if incomplete else 'passed','mode':intent.mode,
@@ -131,7 +133,7 @@ async def classify_relations(result,query,intent,model_factory,*,strict=False):
         chosen.append({**case,'candidate_only':d.relation=='unverified',
                        'relevance':relation,'sources':sorted(case['sources'],key=lambda p:p is not proof)})
     if not strict and any(c['relevance']['relation'] in ('topic','mechanism') for c in chosen):
-        audited=await classify_relations({**result,'results':chosen},query,intent,model_factory,strict=True)
+        audited=await classify_relations({**result,'results':chosen},query,intent,model_factory,strict=True,_allow_parallel=_allow_parallel)
         chosen=audited['results']
         audited_by_id={d['case_id']:d for d in audited['selection_review'].get('decisions',[])}
         decisions=[audited_by_id.get(d.case_id,d.model_dump()) for d in decision.documents]
@@ -141,7 +143,7 @@ async def classify_relations(result,query,intent,model_factory,*,strict=False):
             'decisions':decisions,'scope':'仅本次召回的局部原文，不保证全库完整性'}}
 
 
-async def select_candidates(result,query,model_factory=None,*,_strict=False,intent=None):
+async def select_candidates(result,query,model_factory=None,*,_strict=False,intent=None,_allow_parallel=True):
     # Exact-ID reads retain the complete requested case, including negative examples.
     if CASE_RE.search(query):return result
     intent=intent or bind_intent(query)
@@ -151,7 +153,7 @@ async def select_candidates(result,query,model_factory=None,*,_strict=False,inte
     if model_factory is None:
         from agent.llm import get_llm
         model_factory=get_llm
-    if intent.mode!='mechanism':return await classify_relations(result,query,intent,model_factory)
+    if intent.mode!='mechanism':return await classify_relations(result,query,intent,model_factory,_allow_parallel=_allow_parallel)
     documents=[{'case_id':c['case_id'],'text':core_excerpt(p['excerpt'])} for c in result['results'] for p in c['sources']
                if p['kind'] in ('application','disclosure')]
     grouped={}
@@ -162,9 +164,11 @@ async def select_candidates(result,query,model_factory=None,*,_strict=False,inte
         return unresolved(result,intent.mode,'技术候选超过逐案核对预算')
     if len(payload)>9000 and len(result['results'])>1:
         middle=len(result['results'])//2
-        batches=[]
-        for rows in (result['results'][:middle],result['results'][middle:]):
-            batches.append(await select_candidates({**result,'results':rows},query,model_factory,_strict=_strict,intent=intent))
+        from casework.parallel import independent_pair
+        batches=await independent_pair(
+            lambda:select_candidates({**result,'results':result['results'][:middle]},query,model_factory,_strict=_strict,intent=intent,_allow_parallel=False),
+            lambda:select_candidates({**result,'results':result['results'][middle:]},query,model_factory,_strict=_strict,intent=intent,_allow_parallel=False),
+            enabled=_allow_parallel)
         if any(b.get('selection_review',{}).get('status')!='passed' for b in batches):
             return unresolved(result,intent.mode,'分批相关性核对未全部完成')
         return {**result,'results':[c for b in batches for c in b['results']],
@@ -212,7 +216,7 @@ async def select_candidates(result,query,model_factory=None,*,_strict=False,inte
     chosen=[{**c,'sources':sorted(c['sources'],key=lambda p:quotes[c['case_id']] not in p['excerpt'])}
             for c in result['results'] if c['case_id'] in selected]
     if chosen and not _strict:
-        audited=await select_candidates({**result,'results':chosen},query,model_factory,_strict=True,intent=intent)
+        audited=await select_candidates({**result,'results':chosen},query,model_factory,_strict=True,intent=intent,_allow_parallel=_allow_parallel)
         if audited.get('selection_review',{}).get('status')!='passed':return unresolved(result,intent.mode,'独立机制复核未完成')
         chosen=audited['results']
         audited_decisions={d['case_id']:d for d in audited['selection_review'].get('decisions',[])}

@@ -32,6 +32,13 @@ def verify(text, item=None, claims=None):
 
 
 class StatisticChecks(unittest.TestCase):
+    def test_metric_label_strips_scope_parentheticals_only(self):
+        from tools.statistics_check import metric_label
+        self.assertEqual(metric_label('筛选案件数量（同一筛选范围）'), '筛选案件数量')
+        self.assertEqual(metric_label('2026年7月实际收案（received_date 落在2026-07-01至2026-07-31）'), '实际收案')
+        self.assertEqual(metric_label('净销售额（不含税）'), '净销售额（不含税）')
+        self.assertEqual(metric_label('实际收案数量合计'), '实际收案数量合计')
+
     def test_equivalent_money_units_and_exact_decimal(self):
         for value,text,shown in [(1000000,'2025年销售额100万元[S1]','100万元'),
             (Decimal('1234.56'),'2025年销售额1,234.56元[S1]','1,234.56元'),
@@ -299,3 +306,75 @@ def test_indefinite_example_is_not_a_database_quantity():
     assert statement_units('该句被标注为关键反例，即一个负例样本，用于测试。')==[]
     assert statement_units('共有一个负例样本。')
     assert statement_units('本月收到一个案件。')
+
+
+def department_metric(column,label,names,unit,time,index=0):
+    return {'column':column,'index':index,'label':label,'names':names,'unit':unit,
+            'definition_verified':True,'time':time,'filters':[]}
+
+
+def test_range_total_and_change_percentage_are_verifiable():
+    """A quarter total and a month-over-month percentage come from the program."""
+    quarter={'status':'bounded','start':'2026-07-01','end':'2026-10-01','field':'received_date'}
+    total={'id':'S9','type':'database','columns':['实际收案数量合计'],'rows':[[28]],
+           'statistics':{'version':1,'dimensions':[],
+               'metrics':[department_metric('received_total_count','实际收案数量合计',['实际收案数量合计'],'件',quarter)]}}
+    text='## 2026年第三季度\n2026年第三季度实际收案数量合计28件 [S9]。'
+    check=validate_claims(text,[total],[{'unit_id':0,'metric_text':'实际收案数量合计','value_text':'28件','occurrence':0}])
+    assert check['status']=='passed', check
+    wrong=validate_claims(text.replace('28件','27件'),[total],
+        [{'unit_id':0,'metric_text':'实际收案数量合计','value_text':'27件','occurrence':0}])
+    assert wrong['status']=='failed'
+    comparison={'status':'bounded','start':'2026-09-01','end':'2026-11-01','field':'month_comparison'}
+    pct={'id':'S17','type':'database','columns':['实际收案数量变化百分比'],'rows':[[-25.0]],
+         'statistics':{'version':1,'dimensions':[],
+             'metrics':[department_metric('received_change_pct','实际收案数量变化百分比',
+                                          ['实际收案数量变化百分比','收案数量变化百分比'],'%',comparison)]}}
+    text='2026年10月相比2026年9月：实际收案数量变化百分比-25% [S17]。'
+    check=validate_claims(text,[pct],[{'unit_id':0,'metric_text':'实际收案数量变化百分比','value_text':'-25%','occurrence':0}])
+    assert check['status']=='passed', check
+    # A percentage without the two-month scope cannot be verified.
+    missing_scope='实际收案数量变化百分比-25%。'
+    assert validate_claims(missing_scope,[pct],
+        [{'unit_id':0,'metric_text':'实际收案数量变化百分比','value_text':'-25%','occurrence':0}])['status']=='failed'
+
+
+def month_item(value,month,names=('实际收案数量','实际收案')):
+    time={'status':'bounded','start':f'2026-{month:02d}-01','end':f'2026-{month+1:02d}-01',
+          'field':'received_date'}
+    return {'id':'S2','type':'database','columns':['实际收案数量'],'rows':[[value]],
+            'statistics':{'version':1,'dimensions':[],
+                'metrics':[department_metric('received_count','实际收案数量',list(names),'件',time)]}}
+
+
+def test_number_unit_space_and_time_only_month_rows():
+    """'共 13 件' and '7月2件' are the same facts, not unverifiable wording."""
+    spaced=validate_claims('2026年7月实际收案共 13 件 [S2]。',[month_item(13,7)],
+        [{'unit_id':0,'metric_text':'实际收案','value_text':'13 件','occurrence':0}])
+    assert spaced['status']=='passed', spaced
+    wrong=validate_claims('2026年7月实际收案共 99 件 [S2]。',[month_item(13,7)],
+        [{'unit_id':0,'metric_text':'实际收案','value_text':'99 件','occurrence':0}])
+    assert wrong['status']=='failed'
+    # A month and a value are enough; the month still has to agree.
+    assert validate_claims('2026年7月2件 [S2]。',[month_item(2,7)],
+        [{'unit_id':0,'metric_text':'7月','value_text':'2件','occurrence':0}])['status']=='passed'
+    assert validate_claims('2026年7月3件 [S2]。',[month_item(2,7)],
+        [{'unit_id':0,'metric_text':'7月','value_text':'3件','occurrence':0}])['status']=='failed'
+    assert validate_claims('2026年8月2件 [S2]。',[month_item(2,7)],
+        [{'unit_id':0,'metric_text':'8月','value_text':'2件','occurrence':0}])['status']=='failed'
+    # Without any month or metric name a bare number stays unverifiable.
+    assert validate_claims('共2件 [S2]。',[month_item(2,7)],
+        [{'unit_id':0,'metric_text':'本月','value_text':'2件','occurrence':0}])['status']=='failed'
+
+
+def test_filter_scope_may_be_stated_once_for_the_whole_report():
+    from tools.casework_tools import _metric_contract
+    item={'id':'S7','type':'database','columns':['实际收案数量'],'rows':[[2]],
+          'statistics':{'version':1,'dimensions':[],'metrics':[
+              _metric_contract('received_count',0,
+                  {'status':'bounded','start':'2026-07-01','end':'2026-08-01','field':'received_date'},
+                  [],[{'field':'client_alias','value':'测试客户03（模拟）'}])]}}
+    claims=[{'unit_id':0,'metric_text':'实际收案数量（件）','value_text':'2','occurrence':0}]
+    table='| 月份 | 实际收案数量（件） |\n| --- | --- |\n| 2026年7月 | 2 [S7] |\n'
+    assert validate_claims('统计范围：客户＝测试客户03（模拟）。\n\n'+table,[item],claims)['status']=='passed'
+    assert validate_claims(table,[item],claims)['status']=='failed'

@@ -1,5 +1,11 @@
 <template>
   <div class="result-preview glass-card">
+    <el-descriptions v-if="session?.result" :column="1" border size="small" title="分项结果（内部审查）">
+      <el-descriptions-item v-for="item in assessmentItems" :key="item.key" :label="item.label">
+        <el-tag size="small" :type="item.type">{{ item.status }}</el-tag>
+        <span> {{ item.detail }}</span>
+      </el-descriptions-item>
+    </el-descriptions>
     <el-alert
       v-if="session?.degraded"
       class="degraded-alert"
@@ -8,9 +14,9 @@
       show-icon
       :title="qualitySummaryText(session.quality_summary) || '当前结果尚未通过完整质量校验，已保留可用结果和未达标原因。'"
     />
-    <div class="tabs-shell" :class="{'has-session-files':hasSessionFiles}">
+    <div class="tabs-shell" :class="{'has-session-files':hasSessionFiles,'execution-expanded':executionExpanded}">
       <div class="preview-head-actions">
-      <button v-if="hasSessionFiles" type="button" class="session-files-button" @click="emit('show-files')"><el-icon aria-hidden="true"><FolderOpened /></el-icon>上传附件与会话报告</button>
+      <button v-if="hasSessionFiles" type="button" class="session-files-button" @click="emit('show-files')"><el-icon aria-hidden="true"><FolderOpened /></el-icon>会话附件与报告</button>
       <button id="execution-details-toggle" type="button" class="execution-details-toggle" :class="{attention:session?.status==='failed' || session?.degraded}"
         :aria-expanded="executionExpanded" aria-controls="execution-details" @click="emit('toggle-execution')">
         <span v-if="session?.status==='running'" class="execution-running-dot" aria-hidden="true"></span>
@@ -116,8 +122,10 @@ import ClarificationPanel from './ClarificationPanel.vue'
 import { selectCurrentPdf,executionResultContent } from '../previewState'
 import { sessionOutputFiles } from '../sessionFiles'
 import { qualitySummaryText } from '../reflection'
+import { resultAssessmentItems } from '../resultAssessment'
 
 const props = defineProps({ session: Object, executionExpanded: Boolean })
+const assessmentItems = computed(() => resultAssessmentItems(props.session))
 const emit = defineEmits(['rerun', 'refresh', 'show-evidence', 'clarify', 'show-files', 'toggle-execution'])
 const activeTab = ref('answer')
 watch(() => props.session?.thread_id, () => { activeTab.value = 'answer' })
@@ -298,12 +306,14 @@ function zoom(v) {
 .session-files-button:hover {background:color-mix(in srgb,var(--primary) 14%,var(--card-bg));}
 .session-files-button:focus-visible {outline:2px solid var(--primary);outline-offset:2px;}
 .tabs-shell {position:relative;flex:1;min-height:0;display:flex;flex-direction:column;container-type:inline-size;}
-.tabs :deep(.el-tabs__header) {padding-right:180px;border-bottom:1px solid var(--border);}
-.has-session-files .tabs :deep(.el-tabs__header) {padding-right:390px;}
+.tabs :deep(.el-tabs__header) {padding-right:150px;border-bottom:1px solid var(--border);}
+.has-session-files .tabs :deep(.el-tabs__header) {padding-right:296px;}
+.has-session-files.execution-expanded .tabs :deep(.el-tabs__header) {padding-right:268px;}
+.tabs :deep(.el-tabs__item) {padding-bottom:4px;}
 .tabs :deep(.el-tabs__nav-wrap)::after {display:none;}
-@container (max-width:850px) {
+@container (max-width:500px) {
   .preview-head-actions {position:static;align-self:flex-end;margin-bottom:8px;flex-wrap:wrap;}
-  .tabs :deep(.el-tabs__header),.has-session-files .tabs :deep(.el-tabs__header) {padding-right:0;}
+  .tabs :deep(.el-tabs__header),.has-session-files .tabs :deep(.el-tabs__header),.has-session-files.execution-expanded .tabs :deep(.el-tabs__header) {padding-right:0;}
 }
 .degraded-alert {
   margin-bottom: 6px;

@@ -152,8 +152,8 @@ SUPPORTED_ACTIONS = {
     'case_list': {'cases'}, 'case_date_unknown': {'cases','monthly'},
     'case_material_gaps': {'case_brief'},
     'case_counts': {'summary'},
-    'archive_materials': {'archive'}, 'meeting_attendance': {'meetings'},
-    'meeting_pending': {'meetings'}, 'meeting_content': {'meetings'}, 'meeting_changes': {'meetings'},
+    'archive_materials': {'archive'}, 'meeting_attendance': {'meetings','case_brief'},
+    'meeting_pending': {'meetings','case_brief'}, 'meeting_content': {'meetings','case_brief'}, 'meeting_changes': {'meetings','case_brief'},
     'monthly_counts': {'monthly'}, 'monthly_comparison': {'monthly'},
     'candidate_recommendation': {'recommend'}, 'candidate_history': {'recommend'},
     'candidate_workload': {'recommend'}, 'deadline_upcoming': {'cases'},
@@ -171,6 +171,10 @@ def action_for(requirements, query):
     for requirement in requirements:choices &= SUPPORTED_ACTIONS[requirement.kind]
     if not choices:raise ValueError('需求组合没有一个可完整执行的固定动作')
     kinds={r.kind for r in requirements}
+    if kinds & {'meeting_attendance','meeting_pending','meeting_content','meeting_changes'}:
+        if CASE_RE.search(query) and 'case_brief' in choices:return 'case_brief'
+        choices.discard('case_brief')
+        if not choices:raise ValueError('单案会议要求需明确案号，不能丢失其他要求')
     if kinds & {'candidate_history','candidate_workload'} and 'candidate_recommendation' not in kinds:
         raise ValueError('候选经历与负荷只支持作为辅助分案的子要求，独立自定义统计交完整流程')
     if len(choices) == 1:return choices.pop()
@@ -178,6 +182,7 @@ def action_for(requirements, query):
         return 'case_brief'
     if 'cases' in choices:return 'cases'
     if 'archive' in choices:return 'archive'
+    if 'meetings' in choices:return 'meetings'
     return 'cases'
 
 

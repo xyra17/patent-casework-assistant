@@ -225,6 +225,13 @@ def _recognize(query):
     return RouteDecision("matched", "业务动作与参数通过固定契约", request)
 
 
+def single_field_request(query):
+    """Compatibility wrapper for the original one-field contract."""
+    from casework.execution_policy import field_request
+    request=field_request(query)
+    return request if request is not None and request.case_field else None
+
+
 async def select_route(query, forbidden=(), *, allow_semantic=True):
     """A single route decision; forbidden dependencies never become permissions."""
     from casework.requirements import external_comparison_requested,case_mechanism_judgment_requested
@@ -232,10 +239,14 @@ async def select_route(query, forbidden=(), *, allow_semantic=True):
         return RouteDecision('general','指定案件是否采用机制需要综合解释，不能用原文摘录代替结论')
     if external_comparison_requested(query):
         return RouteDecision('general','外部公开比较需要完整分析，不能缩成内部原文或引用查询')
-    # A grammar match is only a candidate, not proof that all natural-language
-    # clauses were understood. Production always extracts the whole task; the
-    # explicit offline mode exists for grammar regression tests and diagnostics.
-    if allow_semantic:
+    # Only a full, closed single-field grammar can bypass the semantic vote.
+    # Every other natural-language task retains whole-task semantic extraction.
+    from casework.execution_policy import closed_request
+    direct = closed_request(query) if allow_semantic else None
+    if direct:
+        decision = RouteDecision('matched', '完整只读契约匹配，程序读取并核对来源', direct,
+                                 'single_field' if direct.case_field else 'closed_contract')
+    elif allow_semantic:
         from casework.workflow import resolve
         try:
             request = await resolve(query)

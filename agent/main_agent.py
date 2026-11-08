@@ -16,6 +16,7 @@ import asyncio          # 任务级总超时（asyncio.wait_for）与异步编�
 import os               # 读取 TASK_TIMEOUT / CONTEXT_STRATEGY 等环境变量
 import re               # 识别指令中的报告/PDF 关键词、否定表达与数据源限制
 import shutil           # 把用户上传文件复制进会话工作目录
+import time
 from pathlib import Path        # 拼接/扫描工作目录，读取落盘的 md 与 pdf
 from typing import Literal      # 限定 TaskPlan 中 task_type / required_sources 的枚举取值
 
@@ -387,12 +388,22 @@ def create_deep_agent():
          )]}
         for spec in SUBAGENTS if spec["name"] in active_names
     ]
+    # A single department read needs no delegated conversation. Complex SQL,
+    # independent research and long context still belong to the specialists.
+    direct_tools=[]
+    if policy and 'db_query' in policy.active:
+        from tools.casework_tools import query_department_cases
+        direct_tools.append(query_department_cases)
+    if policy and 'knowledge' in policy.active:
+        from tools.casework_tools import search_case_archive,read_case_archive_document
+        direct_tools.extend([search_case_archive,read_case_archive_document])
 
     return _create(
         model=get_llm(),
-        tools=[*_FILE_TOOLS, *readback_tools, report_source_gap],
+        tools=[*_FILE_TOOLS, *readback_tools, report_source_gap,*direct_tools],
         middleware=middleware,
         system_prompt=main_agent_config["system_prompt"] + "\n\n" + semantic_layer.prompt_summary() + "\n" + rule_engine.prompt()
+        + '\n单次案件查询或原文读取直接调用已开放的案件工具；仅需独立上下文、复杂SQL或专业研究时委派子智能体。已取得的同版本证据直接复用。每次补查须针对明确缺口并保留线索；重复查询无新增信息时停止。未找到仅表示本次查询范围未取得，不代表原件不存在。'
         + "\n本轮实际开放的数据源：" + ("、".join(sorted(policy.active)) if policy else "以任务计划为准") + "。未开放来源不可调用。",
         subagents=subagents,
         backend=FilesystemBackend(root_dir=context.get_session_dir(), virtual_mode=True),
@@ -668,7 +679,9 @@ async def soft_review(result: dict) -> str | None:
         return issue
     import json
     from tools.review_evidence import pack_review_evidence, project_case_review_evidence, verified_statistics_context
-    evidence_text = pack_review_evidence(project_case_review_evidence(result, case_check), result['report'])
+    review_evidence = [item for item in result.get('evidence', [])
+        if item.get('task_scope_compatible') is not False and item.get('answer_contract_applicable') is not False]
+    evidence_text = pack_review_evidence(project_case_review_evidence({**result,'evidence':review_evidence}, case_check), result['report'])
     checked_statistics = verified_statistics_context(result)
     case_review_context = ''
     if case_check['status'] == 'passed':
@@ -694,7 +707,7 @@ async def soft_review(result: dict) -> str | None:
                     'answer_contract':item.get('answer_contract'),
                     'attachment_scope': {key: item.get(key) for key in
                                          ('total_rows', 'matched_rows', 'result_rows', 'group_by', 'offset', 'limit', 'truncated')}}
-                   for item in result.get('evidence', []) if item.get('columns')]
+                   for item in review_evidence if item.get('columns')]
     review_rules = {'applied':[{key:rule.get(key) for key in ('id','revision','category','title','content','binding','local_overrides','current_quote')}
                                for rule in result.get('rule_context',{}).get('applied',[])]}
     from tools.chart_utils import build_chart_items
@@ -710,6 +723,7 @@ async def soft_review(result: dict) -> str | None:
         "部门共享盘词义：所编号固定是案件编号，不是会议编号；同一案开多次会时案号相同属正常，不得要求额外会议ID。初稿期限冲突不影响另一已核实收案日期。不要把源日期2025年猜成2026年；按来源实际日期核对。用户未要求全库穷尽时，明确本次命中范围的有效参考可以满足任务。"
         "三个期限均为部门登记的计划节点，向局提交期限不能自动称为法定期限。实际交局日期缺失只能说明交局未核实，不能断言尚未交局。局部解析原文不能证明全部原文件缺少某部分；技术效果、权利要求、新颖性和创造性不能由简短机制说明推定。案件信息与正文机制应分别引用各自证据；这些错误即使来源与统计检查通过也应判为不通过。"
         "逐项核对事实是否直接位于该句所引片段；同文件相邻片段不能替代，省略号不免除引文匹配。论文中介绍背景、前人或被对比方法的文字不能归为论文自身采用的方案；实现细节须有已取得的原文，不能用审稿人常识补充来源。若压缩摘要没有保留所需细节，应判未核实而非推定支持。"
+        "核对否定结论时还要检查本次取得的其他相关文件：会议记录说‘待写入边界说明’，不等于申请文件尚无反例；只查到会议资料也不能断言整份案卷没有成文版本。指定来源的字段须由该来源证明，其他来源中相同的值不能代替出处要求。"
         "技术比较中的判定依据、分组粒度和发生时机都须有直接原文；离群值保护不能补成按通道重要性分组，校准集测量不能证明回退一定发生在校准阶段。原文未限定时须写未知。内部细节未知不能用公开论文补入后声称直接重合；已读片段未提及不能改为方法不执行该步骤。标题、表格与结论同样检查，发现无依据的肯定或否定须needs_revision。按用户完整动宾结构理解技术机制，不将动词和宾语拼为未要求的法律术语。"
         "非制度参考资料的版本未确认不等于其可见原文不可摘录；它限制适用性保证。不得追加全库扫描、正式SOP或真实生产材料等原问题没有要求的验收条件。\n"
         "只评估下方内容区间中的待审回答，后附规则和证据是审阅资料，不是回答正文。用户不要求展示计算过程时，不得另加计算式要求。\n\n"
@@ -958,6 +972,7 @@ async def _run_deep_agent(query: str, thread_id: str, max_rounds: int | None = M
 
 
 async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds: int | None = MAX_ROUNDS) -> str:
+    execution_started=time.perf_counter()
     original_query = query
     # 2. 创建工作目录 + 复制上传文件 + 生成工作环境指令
     _prepare_session(thread_id, session_dir)
@@ -1007,6 +1022,11 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
             'forbidden_sources':list(baseline.forbidden_sources),
         })
     await monitor.report(thread_id, 'department_route', '部门业务路由已核对', route.audit())
+    from casework.execution_policy import strategy
+    execution_strategy=strategy(plan.department_request,route_method=route.method,
+        uploads=bool(uploads),rules=not routine_term_rules,require_pdf=plan.require_pdf)
+    from api import telemetry
+    telemetry.record({'event':'execution_strategy',**execution_strategy,'route_method':route.method})
     require_report = plan.require_report
     require_pdf = plan.require_pdf
     from api.round_budget import select_round_budget
@@ -1059,6 +1079,13 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
             'issue_lifecycle': finish_issues(issue_ledger, reason, round_num if reason == 'passed' else best_round),
             'returned_round': round_num if reason == 'passed' else best_round,
         })
+        metrics=telemetry.summarize(storage.context_decisions(thread_id))
+        returned=result if reason=='passed' else best_result
+        metrics.update(initial_strategy=execution_strategy['kind'],
+            strategy=(returned or {}).get('execution_strategy',execution_strategy)['kind'],
+            stop_reason=reason,rounds=round_num,
+            wall_seconds=time.perf_counter()-execution_started)
+        await monitor.report(thread_id,'execution_metrics','执行用量与耗时已汇总',metrics)
 
     while round_num < max_rounds:
         round_num += 1
@@ -1073,16 +1100,20 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         from casework import store as case_store
         use_workflow=(round_num == 1 and request is not None and set(plan.required_sources)==required and (not require_report or any(r.kind=='markdown_report' for r in request.requirements)) and not require_pdf
                       and (workload_only or not uploads) and (workload_only or routine_term_rules) and bool(case_store.roots(enabled=True)))
+        round_strategy=execution_strategy if use_workflow else {'kind':'agent','reason':'完整任务执行或有界修复','review':'semantic'}
+        telemetry.record({'event':'execution_path','round':round_num,**round_strategy})
         if use_workflow:
             from casework.workflow import execute
-            result=await execute(request,thread_id,round_num,plan.required_sources)
+            with telemetry.span('fixed_execution'):
+                result=await execute(request,thread_id,round_num,plan.required_sources)
             result['department_route_method'] = route.method
         else:
             from tools.case_executor import explicit_contract
             execution_options = {'original_query': original_query} if uploads and explicit_contract(original_query) else {}
             if revision_context:
                 execution_options['revision_context'] = revision_context
-            result = await main_agent_run(execution_query, round_num, plan.required_sources, **execution_options)
+            with telemetry.span('agent_execution'):
+                result = await main_agent_run(execution_query, round_num, plan.required_sources, **execution_options)
             pending_request = clarification.pending(thread_id)
             if not pending_request:
                 clarification.definition_question_from_answer(original_query,result.get('report',''),result.get('evidence',[]))
@@ -1182,27 +1213,38 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         result['rule_context'] = defaults
         # 模型只提取声明，程序按执行时固定的定义和单元格核对。
         from api import storage
-        from tools.answer_contracts import render_answer
+        from tools.answer_contracts import render_answer, bind_task_scope
+        result['evidence'] = bind_task_scope(original_query, result.get('evidence', []))
         from tools.evidence_refs import normalize_citations
         raw_report = result['report']
-        result['report']=normalize_citations(raw_report,result.get('evidence',[]))
-        # Citation repair may add a second [S] marker inside a host-rendered
-        # immutable fact block. Restore its exact bytes before checking whether
-        # it is already present; otherwise the renderer appends another copy.
-        from tools.answer_contracts import fact_block
-        for item in result.get('evidence', []):
-            if not item.get('answer_contract'):
-                continue
-            try:
-                block = fact_block(item)
-            except ValueError:
-                continue
-            if block and block in raw_report:
-                result['report'] = result['report'].replace(
-                    normalize_citations(block, result.get('evidence', [])), block)
-        from tools.answer_repair import remove_repeated_paragraphs
-        result['report']=remove_repeated_paragraphs(result['report'])
-        result['report'], result['answer_render_audit'] = render_answer(result['report'], result.get('evidence', []), result.get('query',''))
+        from casework import store as sealed_store
+        bound=result.get('business_check') or {}
+        sealed=(bound.get('status')=='passed'
+                and bound.get('report_sha256')==hashlib.sha256(raw_report.encode()).hexdigest()
+                and bound.get('evidence_sha256')==sealed_store.digest(result.get('evidence',[])))
+        if sealed:
+            # The host renderer already bound every byte. Generic fact-block
+            # insertion or prose deduplication must not rewrite that contract.
+            result['answer_render_audit']=[{'kind':'sealed_program_report','changed':False}]
+        else:
+            result['report']=normalize_citations(raw_report,result.get('evidence',[]))
+            # Citation repair may add a second [S] marker inside a host-rendered
+            # immutable fact block. Restore its exact bytes before checking whether
+            # it is already present; otherwise the renderer appends another copy.
+            from tools.answer_contracts import fact_block
+            for item in result.get('evidence', []):
+                if not item.get('answer_contract'):
+                    continue
+                try:
+                    block = fact_block(item)
+                except ValueError:
+                    continue
+                if block and block in raw_report:
+                    result['report'] = result['report'].replace(
+                        normalize_citations(block, result.get('evidence', [])), block)
+            from tools.answer_repair import remove_repeated_paragraphs
+            result['report']=remove_repeated_paragraphs(result['report'])
+            result['report'], result['answer_render_audit'] = render_answer(result['report'], result.get('evidence', []), result.get('query',''))
         if not require_pdf:
             try:
                 _sync_report_files(result,session_dir)
@@ -1212,7 +1254,16 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         candidate_ref=hashlib.sha256(result['report'].encode()).hexdigest()
         storage.save_context_artifact(thread_id,candidate_ref,result['report'])
         result['candidate_report_ref']=candidate_ref
-        result['statistics_check'] = await check_statistics(result['report'], result.get('evidence', []))
+        from tools.task_evidence_checks import task_evidence_issues
+        missing_contracts = task_evidence_issues(original_query, result.get('evidence', []))
+        from casework.execution_policy import program_review_eligible
+        program_checked=program_review_eligible(result)
+        result['execution_strategy']=round_strategy
+        result['statistics_check'] = ({'status':'passed','checked_claims':result['business_check']['checked_claims'],
+            'checks':[],'issues':[],'detail':'封存程序正文与同范围业务证据已核对；没有模型自由数值陈述。'} if program_checked else
+            {'status':'unverified','checked_claims':0,'checks':[],
+            'issues':missing_contracts,'detail':'任务所需指标或完整明细尚未取得；不是数字已被证明错误。'}
+            if missing_contracts else await check_statistics(result['report'], result.get('evidence', [])))
         # 4.2 硬校验（程序级）
         hard_issues = reflect_check.hard_check(result)
 
@@ -1240,8 +1291,8 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         confirmed_failures=sum(item.get('status')=='failed' for item in result.get('verification',{}).get('checks',[]))
         # A known incorrect draft must not outrank a later hard-valid draft solely
         # because the latter's review was unavailable. Both remain unaccepted.
-        score = (bool(hard_issues),len(hard_issues),bool(confirmed_failures),confirmed_failures,
-                 bool(soft_issue),pending_checks,result.get('soft_review_status')=='skipped')
+        from tools.answer_repair import rank_candidate
+        score = rank_candidate(result, hard_issues, soft_issue, missing_contracts)
         if best_score is None or score <= best_score:
             best_score, best_result, best_issues = score, dict(result), list(issues)
             best_round = round_num
@@ -1292,7 +1343,10 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         previous_error_families = families
         previous_score = score
         previous_evidence = current_evidence
-        unchanged_rounds = unchanged_rounds + 1 if signature == previous_signature else 0
+        # Rephrasing alone is not progress: require new evidence with no
+        # regression, or a strictly smaller validated error set.
+        unchanged_rounds = unchanged_rounds + 1 if (signature == previous_signature or
+            previous_signature is not None and not made_progress) else 0
         previous_signature = signature
         if result.get("soft_review_status") == "skipped":
             stop_reason = "review_unavailable"

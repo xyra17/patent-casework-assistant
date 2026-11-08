@@ -15,7 +15,7 @@ class RoundRecommendationTests(unittest.TestCase):
         self.assertLessEqual(max(budgets), 3)
         self.assertGreater(select_round_budget({**simple, 'require_pdf': True}, [], None)['recommended_rounds'], budgets[0])
         self.assertGreater(select_round_budget(simple, ['a.docx', 'b.docx'], None)['max_rounds'], budgets[0])
-        self.assertEqual(select_round_budget(simple, [], None, fixed_workflow=True)['max_rounds'], 2)
+        self.assertEqual(select_round_budget(simple, [], None, fixed_workflow=True)['max_rounds'], 3)
 
     def test_recommendation_cannot_mutate_permissions_or_override_manual_budget(self):
         plan = {'task_type': 'report', 'required_sources': ['knowledge'], 'forbidden_sources': ['web_search', 'db_query']}

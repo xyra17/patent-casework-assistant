@@ -7,7 +7,7 @@ def select_round_budget(plan: dict, uploads: list[str], requested: int | None, *
     sources = set(plan.get('required_sources') or [])
     complexity = plan.get('complexity', 'standard')
     if fixed_workflow:
-        recommended, reason = 2, '先执行只读业务契约，必要时保留一次有界修正'
+        recommended, reason = 3, '先执行只读业务契约，保留两次有界修正（引用定位、事实块与统计口径）'
     elif plan.get('require_pdf'):
         recommended, reason = 5, '任务包含PDF产物，需要预留内容和文件交付校验'
     elif complexity == 'complex':

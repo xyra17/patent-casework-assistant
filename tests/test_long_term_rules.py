@@ -146,6 +146,21 @@ class LongTermRuleTests(unittest.TestCase):
         skipped=self.resolve('库存',[{'id':a['id'],'revision':1},{'id':b['id'],'revision':1}])
         self.assertFalse(skipped['conflicts']);self.assertFalse(skipped['applied'])
 
+    def test_unavailable_review_skips_single_non_business_default(self):
+        rule=self.create(preference())
+        with patch.object(engine,'review_candidates',AsyncMock(side_effect=RuntimeError('offline'))):
+            result=asyncio.run(engine.resolve('库存是多少'))
+        self.assertFalse(result['conflicts'])
+        self.assertFalse(result['applied'])
+        self.assertEqual(result['overridden'][0]['id'],rule['id'])
+        self.assertIn('未应用',result['overridden'][0]['reason'])
+
+    def test_unavailable_review_keeps_executable_business_rule_blocked(self):
+        self.create(business())
+        with patch.object(engine,'review_candidates',AsyncMock(side_effect=RuntimeError('offline'))):
+            result=asyncio.run(engine.resolve('销售额是多少'))
+        self.assertEqual(len(result['conflicts']),1)
+
     def test_model_cannot_silently_choose_between_conflicting_defaults(self):
         a=self.create();b=self.create(preference(content='先列依据，再给结论。'))
         verdict=Review(decisions=[ReviewItem(rule_id=a['id'],action='use',reason='选此条'),

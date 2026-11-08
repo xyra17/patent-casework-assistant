@@ -15,6 +15,16 @@ from tools.answer_contracts import fact_block, fact_token, quote_options
 from tools.evidence_refs import _quoted_bindings, _CANDIDATE, _VALID,report_references
 
 
+def rank_candidate(result, hard_issues, soft_issue, missing_contracts=()):
+    checks = (result.get('verification') or {}).get('checks', [])
+    failed = sum(item.get('status') == 'failed' for item in checks)
+    pending = sum(item.get('status') in ('failed', 'unverified') for item in checks)
+    # Missing the task's scope/rows is more serious than extra presentation
+    # diagnostics on a later source-complete candidate. Neither is a pass.
+    return (bool(missing_contracts), bool(hard_issues), len(hard_issues), bool(failed), failed,
+            bool(soft_issue), pending, result.get('soft_review_status') == 'skipped')
+
+
 class AnswerEdit(BaseModel):
     model_config = ConfigDict(extra='forbid')
     unit_id: str

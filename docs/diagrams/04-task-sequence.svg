@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1540" height="1900" viewBox="0 0 1540 1900" role="img" aria-label="任务运行时序">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#aab8c5" stroke-width="1.6"/></marker></defs>
+<rect x="0" y="0" width="1540" height="1900" fill="#0d1117"/>
+<g font-family="Inter, Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" fill="#e6edf3">
+<text x="46" y="43" font-size="27" font-weight="650" text-anchor="start" fill="#e6edf3">FIGURE 04  /  任务运行时序</text>
+<text x="46" y="72" font-size="16" font-weight="400" text-anchor="start" fill="#aab8c5">规则或模型理解 · 版本缓存复用 · 程序或模型审查 · 事件先存后推</text>
+<polyline points="46,88 1494,88" fill="none" stroke="#364351" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="25" y="120" width="180" height="58" rx="6" fill="#1c2530" stroke="#768698"/>
+<text x="115" y="155" font-size="17" font-weight="650" text-anchor="middle" fill="#e6edf3">Vue 工作台</text>
+<polyline points="115,178 115,1875" fill="none" stroke="#526170" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="280" y="120" width="180" height="58" rx="6" fill="#1c2530" stroke="#768698"/>
+<text x="370" y="155" font-size="17" font-weight="650" text-anchor="middle" fill="#e6edf3">FastAPI</text>
+<polyline points="370,178 370,1875" fill="none" stroke="#526170" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="535" y="120" width="180" height="58" rx="6" fill="#1c2530" stroke="#768698"/>
+<text x="625" y="155" font-size="17" font-weight="650" text-anchor="middle" fill="#e6edf3">任务编排协程</text>
+<polyline points="625,178 625,1875" fill="none" stroke="#526170" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="790" y="120" width="180" height="58" rx="6" fill="#1c2530" stroke="#768698"/>
+<text x="880" y="155" font-size="17" font-weight="650" text-anchor="middle" fill="#e6edf3">任务工具</text>
+<polyline points="880,178 880,1875" fill="none" stroke="#526170" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="1045" y="120" width="180" height="58" rx="6" fill="#1c2530" stroke="#768698"/>
+<text x="1135" y="155" font-size="17" font-weight="650" text-anchor="middle" fill="#e6edf3">Monitor</text>
+<polyline points="1135,178 1135,1875" fill="none" stroke="#526170" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="1330" y="120" width="180" height="58" rx="6" fill="#1c2530" stroke="#768698"/>
+<text x="1420" y="155" font-size="17" font-weight="650" text-anchor="middle" fill="#e6edf3">会话 SQLite</text>
+<polyline points="1420,178 1420,1875" fill="none" stroke="#526170" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="242.5" y="208" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">连接 WebSocket</text>
+<polyline points="115,220 370,220" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="242.5" y="263" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">POST /api/task</text>
+<polyline points="115,275 370,275" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="895.0" y="318" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">创建执行记录 / execution_id</text>
+<polyline points="370,330 1420,330" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="497.5" y="373" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">create_task 启动协程</text>
+<polyline points="370,385 625,385" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="242.5" y="428" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">返回 thread_id / execution_id</text>
+<polyline points="370,440 115,440" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<text x="640" y="498" font-size="16" font-weight="400" text-anchor="start" fill="#e6edf3">完整规则识别 / 按需模型提取；确定计划与预算</text>
+<polyline points="625,510 669,510 669,530 625,530" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="55" y="555" width="1450" height="770" rx="5" fill="none" stroke="#63778d"/>
+<rect x="55" y="555" width="650" height="33" fill="#1c2530" stroke="#63778d"/>
+<text x="70" y="578" font-size="15" font-weight="650" text-anchor="start" fill="#e6edf3">loop  执行与核验：直到通过、等待补充或触发停止条件</text>
+<rect x="570" y="595" width="910" height="365" rx="5" fill="none" stroke="#63778d"/>
+<rect x="570" y="595" width="650" height="33" fill="#1c2530" stroke="#63778d"/>
+<text x="585" y="618" font-size="15" font-weight="650" text-anchor="start" fill="#e6edf3">opt  本轮需要调用工具</text>
+<text x="752.5" y="648" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">固定流程动作或 Agent 工具调用</text>
+<polyline points="625,660 880,660" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="895" y="703" font-size="16" font-weight="400" text-anchor="start" fill="#e6edf3">权限、版本与适用的缓存检查</text>
+<polyline points="880,715 924,715 924,735 880,735" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="820" y="755" width="660" height="145" rx="5" fill="none" stroke="#63778d"/>
+<rect x="820" y="755" width="650" height="33" fill="#1c2530" stroke="#63778d"/>
+<text x="835" y="778" font-size="15" font-weight="650" text-anchor="start" fill="#e6edf3">opt  实际读取并产生新证据</text>
+<text x="1150.0" y="803" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">登记证据，保存并取得 [S] 编号</text>
+<polyline points="880,815 1420,815" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="1150.0" y="858" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">返回来源编号</text>
+<polyline points="1420,870 880,870" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<text x="752.5" y="923" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">返回结果与 [S]；命中缓存时复用已有证据</text>
+<polyline points="880,935 625,935" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<text x="640" y="983" font-size="16" font-weight="400" text-anchor="start" fill="#e6edf3">硬检查；按契约执行程序审查或模型审查</text>
+<polyline points="625,995 669,995 669,1015 625,1015" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="880.0" y="1048" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">report：执行 / 核验事件</text>
+<polyline points="625,1060 1135,1060" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="1277.5" y="1103" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">append_event 持久化</text>
+<polyline points="1135,1115 1420,1115" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="625.0" y="1158" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">WebSocket 发送队列推送事件</text>
+<polyline points="1135,1170 115,1170" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<rect x="570" y="1205" width="875" height="95" rx="5" fill="none" stroke="#63778d"/>
+<rect x="570" y="1205" width="650" height="33" fill="#1c2530" stroke="#63778d"/>
+<text x="585" y="1228" font-size="15" font-weight="650" text-anchor="start" fill="#e6edf3">opt  未通过且可继续</text>
+<text x="640" y="1263" font-size="16" font-weight="400" text-anchor="start" fill="#e6edf3">携带问题与已有证据，进入下一轮修正</text>
+<polyline points="625,1275 669,1275 669,1295 625,1295" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="497.5" y="1368" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">返回结果 / 等待补充 / 执行异常</text>
+<polyline points="625,1380 370,1380" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<text x="752.5" y="1423" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">生成结果或状态事件</text>
+<polyline points="370,1435 1135,1435" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="1277.5" y="1478" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">保存事件、结果与状态</text>
+<polyline points="1135,1490 1420,1490" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="625.0" y="1533" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">推送结果或状态事件</text>
+<polyline points="1135,1545 115,1545" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<rect x="55" y="1590" width="1450" height="285" rx="5" fill="none" stroke="#63778d"/>
+<rect x="55" y="1590" width="650" height="33" fill="#1c2530" stroke="#63778d"/>
+<text x="70" y="1613" font-size="15" font-weight="650" text-anchor="start" fill="#e6edf3">opt  运行中断线恢复</text>
+<text x="242.5" y="1638" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">重连 WebSocket；GET /api/runs/{thread_id}</text>
+<polyline points="115,1650 370,1650" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="895.0" y="1683" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">读取状态与历史事件</text>
+<polyline points="370,1695 1420,1695" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="895.0" y="1728" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">持久化会话快照</text>
+<polyline points="1420,1740 370,1740" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<text x="242.5" y="1773" font-size="16" font-weight="400" text-anchor="middle" fill="#e6edf3">返回快照与历史事件</text>
+<polyline points="370,1785 115,1785" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="7 6"/>
+<text x="130" y="1828" font-size="16" font-weight="400" text-anchor="start" fill="#e6edf3">合并缓冲事件并去重</text>
+<polyline points="115,1840 159,1840 159,1860 115,1860" fill="none" stroke="#b6c2cd" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+</g></svg>

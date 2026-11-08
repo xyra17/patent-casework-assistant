@@ -17,6 +17,7 @@ _thread_id: ContextVar[Optional[str]] = ContextVar("thread_id", default=None)
 _session_dir: ContextVar[Optional[str]] = ContextVar("session_dir", default=None)
 _internal_before_web: ContextVar[bool] = ContextVar("internal_before_web", default=False)
 _round: ContextVar[Optional[int]] = ContextVar("round_num", default=None)
+_read_cache: ContextVar[dict | None] = ContextVar('task_read_cache',default=None)
 
 # 工具预算：key=(thread_id, round)，value={tool_kind: used_count}
 _budget_lock = threading.Lock()
@@ -25,7 +26,8 @@ _tool_budgets: dict[tuple[str, int], dict[str, int]] = {}
 
 def set_session(thread_id: str, session_dir: str) -> None:
     """设置当前协程的会话上下文。"""
-    if _thread_id.get() != thread_id:
+    if _thread_id.get() != thread_id or _session_dir.get() != session_dir:
+        _read_cache.set({'entries':{},'lock':threading.RLock()})
         from api import source_policy
         source_policy.reset_policy()
     _internal_before_web.set(False)
@@ -63,6 +65,14 @@ def reset_session() -> None:
     _thread_id.set(None)
     _session_dir.set(None)
     _round.set(None)
+    cache=_read_cache.get()
+    if cache is not None:
+        with cache['lock']:cache['entries'].clear()
+    _read_cache.set(None)
+
+
+def task_read_cache():
+    return _read_cache.get()
 
 
 def reset_tool_budget() -> None:

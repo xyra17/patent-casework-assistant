@@ -911,7 +911,9 @@ class RegressionTests(unittest.TestCase):
 
     def test_custom_round_budget_can_reach_fifth_round(self):
         async def run():
-            results = [{'report': f'修订结果{i}', 'evidence': [], 'called_sources': [],
+            results = [{'report': f'修订结果{i}',
+                        'evidence': [{'id': 'S1', 'type': 'knowledge', 'snippet': f'本轮新增资料{i}'}],
+                        'called_sources': [],
                         'required_sources': [], 'pdf_produced': False} for i in range(5)]
             with patch.object(main_agent, 'main_agent_run', AsyncMock(side_effect=results)) as runner, \
                     patch.object(main_agent, 'soft_review', AsyncMock(side_effect=['尚有缺口'] * 4 + [None])):

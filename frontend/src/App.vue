@@ -144,7 +144,7 @@
     </footer>
 
     <RecycleBin v-if="trashVisible" v-model="trashVisible" @restored="onRestored" />
-    <el-drawer v-model="filesVisible" title="上传附件与会话报告" size="min(600px, 100vw)">
+    <el-drawer v-model="filesVisible" title="会话附件与报告" size="min(600px, 100vw)">
       <FilePanel :session="session" embedded @rerun="rerun" @compare="compareSessionAttachments" />
     </el-drawer>
 
@@ -277,6 +277,7 @@ function onEvent(session, ev) {
     session.status = 'completed'
     session.degraded = Boolean(ev.data?.degraded)
     session.result = ev.data?.result || ''
+    session.result_assessment = ev.data?.result_assessment || null
     session.query_result = ev.data?.query_result || null
     session.evidence = ev.data?.evidence || session.evidence || []
     session.charts = ev.data?.charts || []
@@ -404,6 +405,7 @@ function runToSession(run, withEvents = false) {
     events,
     session_dir: run.session_dir ?? sessionEvent?.data?.path ?? '',
     result: run.result || '',
+    result_assessment: run.result_assessment || null,
     query_result: run.query_result || null,
     plan: run.plan || planEvent?.data || null,
     hard_rounds: reflectionEvents.map((e) => e.data),
@@ -499,6 +501,7 @@ async function rerun(threadId, allowedSources, clarificationAnswer = null, nextQ
   s.events = []
   s.status = 'running'
   s.result = ''
+  s.result_assessment = null
   s.query_result = null
   s.session_dir = ''
   s.degraded = false

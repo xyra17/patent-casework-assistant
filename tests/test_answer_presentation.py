@@ -106,6 +106,9 @@ class AnswerPresentationTests(unittest.TestCase):
         self.assertTrue(data['fallback'])
         self.assertNotIn('【未达标说明】', data['result'])
         self.assertNotIn('兜底', data['result'])
+        self.assertEqual(data['result_assessment']['delivery']['status'], 'partial')
+        self.assertEqual(data['result_assessment']['facts']['status'], 'unverified')
+        self.assertEqual(data['result_assessment']['completeness']['status'], 'unverified')
 
 
 if __name__ == '__main__':

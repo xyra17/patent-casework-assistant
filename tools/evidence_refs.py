@@ -105,11 +105,19 @@ def _source_paragraph_marker(report, match, evidence):
     line_end = report.find('\n', match.end())
     line = report[line_start:len(report) if line_end < 0 else line_end]
     prefix = line[:match.start() - line_start]
-    if not re.search(r'(?:原文|说明书|段落|段号|第\s*\d+\s*页|位置|出处)', prefix):
-        return False
     refs = report_references(line)
-    return any(item.get('id') in refs and marker in str(item.get('snippet') or '')
-               for item in evidence)
+    if re.search(r'(?:原文|说明书|段落|段号|第\s*\d+(?:\s*[–—-]\s*\d+)?\s*页|位置|出处)', prefix):
+        if any(item.get('id') in refs and marker in str(item.get('snippet') or '')
+               for item in evidence):
+            return True
+    # A document heading may name the PDF once, then give a paragraph range
+    # before the per-row citations. The basename and paragraph must both
+    # identify one preserved source file; a bare [0004] remains invalid.
+    matches = [item for item in evidence if item.get('type') in ('knowledge', 'file')
+               and marker in str(item.get('snippet') or '')
+               and str(item.get('title') or '').rsplit('/', 1)[-1] in line
+               and str(item.get('title') or '').lower().endswith(('.pdf', '.docx'))]
+    return len(matches) == 1
 
 
 def citation_issues(report, evidence):
@@ -152,9 +160,18 @@ def citation_issues(report, evidence):
 
 def normalize_citations(report, evidence):
     """Split explicit compound IDs only when every ID exists; never guess [S]."""
+    evidence = [item for item in evidence if item.get('task_scope_compatible') is not False]
     # JSON output has its own exact field contract, so leave it byte-for-byte.
     if _json_answer(report) is not None:
         return report
+    available = {item.get('id') for item in evidence}
+    # Normalize an explicit, existing S-id next to a patent paragraph marker.
+    # Never invent a source for a numeric marker.
+    def bind_explicit_paragraph_ids(match):
+        ids = re.findall(_ID, match[2])
+        return match[1] + ''.join('[' + ident + ']' for ident in ids) if set(ids) <= available else match[0]
+    report = re.sub(r'(\[\d{4}\])\s*（(S[1-9]\d*(?:\s*[、，,]\s*S[1-9]\d*)*)）',
+                    bind_explicit_paragraph_ids, report)
     report=re.sub(r'\n\n### 引用原文定位\n\n\| 证据 \| 原件 \| 位置 \|\n\| --- \| --- \| --- \|(?:\n\|[^\n]*)*','',report)
     def bind_paragraph_range(match):
         path, middle, first, last = match.groups()
@@ -257,4 +274,47 @@ def normalize_citations(report, evidence):
         chosen=min(matches,key=lambda i:int(i['id'][1:]))
         replacements.append((match.start(group+1),match.end(group+1),'['+chosen['id']+']'))
     for start,end,text in reversed(replacements):report=report[:start]+text+report[end:]
+    def _paragraph_text(snippet, marker, before=False):
+        start=snippet.find(marker)
+        if start<0:return ''
+        if before:
+            head=snippet[:start].rstrip()
+            index=head.rfind('\n')
+            return head[index+1:].strip() if index>=0 else head.strip()
+        body=snippet[start+len(marker):start+len(marker)+240]
+        return re.split(r'\[\d{4}\]', body)[0].strip()
+
+    def bind_paragraph_marker(match):
+        """Complete a paragraph reference the answer already quoted literally."""
+        marker=match[0]
+        line_start=report.rfind('\n',0,match.start())+1
+        line_end=report.find('\n',match.end())
+        line=report[line_start:len(report) if line_end<0 else line_end]
+        if line.lstrip().startswith('>') or re.search(r'(?:原文|说明书|段落|段号|位置|出处)',line[:match.start()-line_start]):
+            return marker
+        cited=[item for item in evidence if item.get('id') in report_references(line)
+               and item.get('type') in ('knowledge','file','upload')
+               and marker in str(item.get('snippet') or '')]
+        if len(cited)!=1:
+            return marker
+        after=report[match.end():len(report) if line_end<0 else line_end].lstrip(' ：:')
+        tail=re.split(r'[。；]',after)[0][:40].strip()
+        snippet=str(cited[0].get('snippet') or '')
+        # The paragraph text must continue the cited snippet literally. A marker
+        # used for something else is never renamed into a source position.
+        if len(tail)>=8 and _literal(tail) in _literal(snippet):
+            return '原文段落'+marker
+        # A stage label written before the marker ("S1阶段：检测语音终点[0004]")
+        # still quotes that paragraph; match its own text anywhere on the line.
+        body=_paragraph_text(snippet,marker)
+        prior=_paragraph_text(snippet,marker,before=True)
+        for candidate in (body,prior):
+            if len(candidate)>=8 and any(_literal(candidate)[i:i+8] in _literal(line)
+                                     for i in range(len(candidate)-8)):
+                return '原文段落'+marker
+        return marker
+    # A bare [0005] stays invalid unless the answer already quoted that very
+    # paragraph of the cited document; then the position label is made explicit
+    # so the existing check can bind it instead of dropping the whole answer.
+    report=re.sub(r'\[\d{4}\]',bind_paragraph_marker,report)
     return report

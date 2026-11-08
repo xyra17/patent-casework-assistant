@@ -22,12 +22,14 @@
           <el-tag size="small" :type="activeExecution.status === 'failed' ? 'danger' : activeExecution.degraded ? 'warning' : activeExecution.status === 'completed' ? 'success' : 'info'">{{ statusLabel(activeExecution.status,activeExecution.degraded) }}</el-tag>
           <time>{{ formatTime(historical ? historical.created_at : session?.started_at) }}</time>
         </header>
+        <p class="history-hint">{{ assessmentText(activeExecution) }}</p>
         <div v-if="activeExecution.result" class="result-markdown" v-html="renderResult(activeExecution.result)"></div>
         <p v-else class="history-hint">{{ activeExecution.status === 'failed' ? '本次执行失败，未生成回答。' : activeExecution.status === 'running' ? '执行中，尚未生成回答。' : '本次执行没有回答。' }}</p>
         <details v-if="activeExecution.error" class="failure-detail"><summary>{{ failureLabel(activeExecution.error) }} · 查看详情</summary><p class="error">{{ activeExecution.error }}</p></details>
       </article>
       <article v-if="compare && historical" class="execution-detail compare-current">
         <header class="execution-heading"><h3>当前执行</h3><el-tag size="small" :type="session?.status === 'failed' ? 'danger' : session?.degraded ? 'warning' : session?.status === 'completed' ? 'success' : 'info'">{{ statusLabel(session?.status,session?.degraded) }}</el-tag><time>{{ formatTime(session?.started_at) }}</time></header>
+        <p class="history-hint">{{ assessmentText(session) }}</p>
         <div v-if="session?.result" class="result-markdown" v-html="renderResult(session.result)"></div>
         <p v-else class="history-hint">当前执行尚无回答。</p>
       </article>
@@ -60,12 +62,14 @@ import {evidenceTitle} from '../sourcePresentation.js'
 import {parseResultMarkdown} from '../resultMarkdown'
 import DOMPurify from 'dompurify'
 import {sourceSummary} from '../sourceSelection'
+import {resultAssessmentItems} from '../resultAssessment'
 import {listExecutions,getExecution,downloadFile} from '../api'
 const props=defineProps({session:Object})
 const executions=ref([]),selected=ref(''),historical=ref(null),manifest=ref(null),nextOffset=ref(null),loading=ref(false),error=ref('')
 const compare=ref(false),detailLoading=ref(false)
 const activeExecution=computed(()=>historical.value || props.session || {})
 const renderResult=value=>DOMPurify.sanitize(parseResultMarkdown(value))
+const assessmentText=value=>resultAssessmentItems(value).map(item=>`${item.label}：${item.status}`).join('；')
 const failureLabel=value=>/insufficient.?balance|余额不足/i.test(value) ? '模型服务余额不足' : /timeout|超时/i.test(value) ? '执行超时' : '失败原因'
 let generation=0,detailGeneration=0
 const formatTime=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):''

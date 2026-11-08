@@ -146,9 +146,23 @@ async def resolve(query, skips=()):
             decisions[item.rule_id]=item
     except Exception:
         decisions={}
+    # A failed review must not turn harmless wording defaults into a task
+    # submission failure. Executable business rules still fail closed below.
+    duplicate_defaults = set()
+    by_subject = {}
+    for rule in pending:
+        if rule['category'] in ('term', 'preference'):
+            by_subject.setdefault((rule['category'], rule['subject'].casefold()), []).append(rule)
+    for group in by_subject.values():
+        if len({rule['content'] for rule in group}) > 1 and any(rule['id'] not in decisions for rule in group):
+            duplicate_defaults.update(rule['id'] for rule in group)
     for rule in pending:
         item=decisions.get(rule['id'])
-        if item and item.action=='current_overrides' and local_change_requested(rule,item.current_quote):
+        if rule['id'] in duplicate_defaults:
+            result['conflicts'].append({**rule,'reason':'同一主题有不同的有效长期定义，当前任务没有明确取舍，请核对'})
+        elif not item and rule['category'] in ('term', 'preference'):
+            result['overridden'].append({**rule,'reason':'本次规则审查未完成，未应用这条非业务默认规则'})
+        elif item and item.action=='current_overrides' and local_change_requested(rule,item.current_quote):
             result['conflicts'].append({**rule,'reason':'当前要求只调整时间或过滤，不能丢弃整条默认口径；请核对局部调整'})
         elif item and item.action=='current_overrides' and explicit_override(rule,item.current_quote,query):
             result['overridden'].append({**rule,'reason':item.reason,'current_quote':item.current_quote})

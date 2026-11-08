@@ -31,8 +31,8 @@ class AdaptiveRecoveryTests(unittest.TestCase):
             self.assertIsNone(extend_round_budget(select_round_budget({},[],manual),
                 made_progress=True,stalled=False,recoverable=True))
         fixed=select_round_budget({},[],None,fixed_workflow=True)
-        self.assertEqual(fixed['max_rounds'],2)
-        self.assertEqual(extend_round_budget(fixed,made_progress=True,stalled=False,recoverable=True)['max_rounds'],3)
+        self.assertEqual(fixed['max_rounds'],3)
+        self.assertEqual(extend_round_budget(fixed,made_progress=True,stalled=False,recoverable=True)['max_rounds'],4)
 
     def execute(self, mode, results, reviews):
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
