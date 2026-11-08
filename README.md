@@ -32,58 +32,36 @@
 
 ![系统组件架构：工作台、Python 后端、执行器、任务级缓存、模型与存储](docs/diagrams/01-system-architecture.svg)
 
-后端在同一个 FastAPI 应用内组织任务，固定业务执行器与 DeepAgents 共享数据访问、来源记录和文件工具。同一任务已取得且版本一致的案件资料可以复用；会前准备按案收集材料清单与已发布正文。具体实现见[任务执行](docs/execution-boundaries.md)和[来源权限](docs/task-source-selection.md)。
+后端使用 FastAPI，结合固定业务流程与 DeepAgents 处理不同任务。案件资料和公司文档分别建立索引，执行过程与来源随会话保存。
 
 ### 固定流程与 Agent 如何分工
 
 | 执行策略 | 谁决定下一步 | 适合的任务 |
 | --- | --- | --- |
-| 直接查询 | 完整句式匹配后，由程序取数并输出 | 同一案件的负责人、阶段和多个期限字段 |
-| 固定流程 | 程序按既定步骤读取和计算，模型按需理解或整理 | 期限排查、月度统计、固定会前卡 |
+| 直接查询 | 程序取数并输出 | 同一案件的负责人、阶段和多个期限字段 |
+| 固定流程 | 程序按既定步骤执行，模型按需参与 | 期限排查、月度统计、固定会前卡 |
 | 固定流程加条件分支 | 固定读取起步，再按结果筛选、补查或澄清 | 相似案件查找、辅助分案 |
 | Agent 动态执行 | DeepAgents 根据已取得的结果选择后续工具，按需委派子智能体 | 阅读附件后比较旧案、跨来源分析、整理报告 |
 
-这四种策略共享执行设施，不是依次经过的四层。程序按完整需求和已开放来源选择策略；缺少资料或关键条件时，保留缺口并请用户补充。
+程序根据完整需求选择策略；资料不足或关键条件不明确时，请用户补充。提交区可以选择业务数据库、知识库和联网检索，默认关闭联网。
 
-<details>
-<summary>展开：任务执行流程</summary>
+### 任务执行流程
 
 ![四种执行策略、用户补充、有界修正与结果交付](docs/diagrams/02-routing-and-execution.svg)
 
-</details>
-
-<details>
-<summary>展开：任务运行时序</summary>
-
-![任务提交、执行、资料复用、持久化与事件推送时序](docs/diagrams/04-task-sequence.svg)
-
-前端先连 WebSocket，再提交任务。后台先持久化执行事件，再推送进度；连接中断后，前端可读取运行记录恢复显示。关键条件不清楚时，任务等待用户补充。
-
-</details>
-
-### 数据放在哪里
-
-| 数据 | 当前存储 | 用途 |
-| --- | --- | --- |
-| 会话、执行事件与证据 | 应用 SQLite | 恢复任务进度和查看结果来源 |
-| 案件目录、原件版本与正文分块 | 案件 SQLite 与本地文件 | 保留案号、原文位置和版本 |
-| 结构化业务记录 | MySQL | 查询案件信息、会议和统计所需字段 |
-| 公司文档知识库 | Chroma 与词法索引 | 检索单独导入的公司文档 |
-
-案卷和公司文档分别建索引，检索范围也各自独立。
-
 ### 文件如何进入结果
-
-<details>
-<summary>展开：文档入库与在线检索</summary>
 
 ![共享盘入库、案卷与公司文档检索、按案材料收集及版本复用](docs/diagrams/03-ingestion-and-retrieval.svg)
 
-</details>
+共享盘资料解析后分别用于结构化查询和正文检索。案卷检索使用本地 **Qwen3-Embedding-0.6B + BM25**，按需使用 **bge-reranker-base** 重排；公司文档使用 Chroma 与词法索引。
 
-共享盘原件按白名单只读扫描；案件信息与会议字段保留候选值及冲突，案卷正文保存分块、位置、哈希和解析版本。当前案卷召回使用本地 **Qwen3-Embedding-0.6B + BM25**，条件满足时使用 **bge-reranker-base** 重排；普通知识库独立维护 Chroma 与词法索引。向量不可用时，部分查询可退回词法路径并显示状态。
+文本 PDF 优先读取原生文字，扫描页和复杂版面按配置使用本地 MinerU 解析。详见[文档解析](docs/document-parsing.md)。
 
-文本 PDF 优先读取原生文字；扫描页、图片和复杂版面按配置使用本地 MinerU 解析。纯图形可由单独的视觉工具观察。详见[文档解析](docs/document-parsing.md)。五张图的 SVG、PNG、Mermaid 源及生成命令见[图稿说明](docs/diagrams/README.md)。
+### 任务运行时序
+
+![任务提交、执行、资料复用、持久化与事件推送时序](docs/diagrams/04-task-sequence.svg)
+
+前端通过 WebSocket 展示执行进度，断线后可恢复已保存的运行记录。[查看图稿](docs/diagrams/README.md)。
 
 ## 运行演示
 
@@ -99,7 +77,7 @@ docker compose up -d mysql
 
 在 `.env` 中配置业务数据库连接及生成模型的 OpenAI 兼容接口。生成任务需要可用的模型端点；本地向量模型权重位于被 Git 忽略的 `models/`，新克隆需按 `.env.example` 准备 `EMBEDDING_MODEL_PATH` 等路径。保密资料应连接获准的本地模型端点。
 
-首次建立**较小的部门模拟场景**时，运行：
+首次建立部门模拟场景时，运行：
 
 ```bash
 PYTHONPATH=. .venv/bin/python scripts/setup_department_demo.py --activate
@@ -128,6 +106,6 @@ npm --prefix frontend run build
 | [`casework/`](casework/) | 案件信息、共享盘同步、检索、统计与推荐 |
 | [`agent/`](agent/) · [`harness/`](harness/) | DeepAgents 编排与上下文预算 |
 | [`tools/`](tools/) · [`rules/`](rules/) | 数据访问、证据核验、文档工具与长期规则 |
-| [`deploy/`](deploy/) · [`docs/`](docs/) | 部署配置与详细设计 |
+| [`deploy/`](deploy/) · [`docs/`](docs/) | 部署模板与使用说明 |
 
 本仓库不包含 `.env`、运行数据库、会话附件或本地模型权重。

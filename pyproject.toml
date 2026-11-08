@@ -65,6 +65,3 @@ frontend = ["dist/*", "dist/assets/*"]
 [project.scripts]
 patent-casework-assistant = "api.server:start_server"
 tanyuan = "api.server:start_server"
-
-[project.optional-dependencies]
-eval = ["ragas", "datasets"]

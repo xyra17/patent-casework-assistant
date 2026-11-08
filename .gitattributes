@@ -1,3 +1,2 @@
 *.pdf binary
 *.log -diff
-eval/multimodal-20261104/regression-tests.txt -diff
