@@ -29,6 +29,9 @@ def delivery(request, payload):
                 'case_ids': [c['case_id'] for c in value['results']], 'has_more': value['has_more'],
                 'technical_excerpts': [{'case_id': c['case_id'], 'text': next((p['excerpt'] for p in c['sources']
                     if p['kind'] in ('application', 'disclosure')), c['sources'][0]['excerpt'] if c['sources'] else '')} for c in value['results']],
+                'evidence_completeness': [{'case_id':c['case_id'], **c.get('evidence_completeness', {})}
+                                          for c in value['results']],
+                'evidence_readback': value.get('evidence_readback', {}),
                 'archive_kind':value.get('filters',{}).get('kind'),
                 'query_scope':value.get('selection_review',{}).get('mode',value.get('query_scope','ambiguous')),
                 'exhaustive':value.get('exhaustive',False),
@@ -77,6 +80,11 @@ def delivery(request, payload):
     selected=payload['candidates'] if load_only else payload['candidates'][:3]
     return {'selected_candidates': [r['name'] for r in selected],
             'recommendation_mode':request.recommendation_mode,
+            'workload_proofs': [{'owner': r['name'], 'active_count': r.get('active_count'),
+                                 'active_case_ids': [c['case_id'] for c in r.get('active_cases', [])],
+                                 'unknown_stage_case_ids': [c['case_id'] for c in r.get('unknown_stage_cases', [])],
+                                 'as_of': payload.get('as_of')}
+                                for r in selected],
             'technical_intent_unresolved':payload.get('technical_intent_unresolved',False),
             'technical_excerpts': [] if not has_history else [{'case_id': h['case_id'], 'text': p['excerpt']} for r in selected for h in r['history_matches'][:3] for p in h['sources'][:1]],
             'fields': (['historical_owner_evidence','body_quote'] if has_history else [])+['current_active_count','near_due_count','overdue_count','unknown_stage','three_due_dates_and_stage','unknown_due_nodes','human_confirmation'],
@@ -168,6 +176,19 @@ def task_contract_issues(query, request, delivered):
             issues.append('期限基准日与原问题不符')
         if request.operation == 'recommend' and explicit_dates and request.as_of not in explicit_dates:
             issues.append('候选负荷基准日与原问题不符')
+        if delivered and request.operation == 'recommend' and re.search(r'在办量|在办案件|工作量|人员负荷', text):
+            proofs = delivered.get('workload_proofs', [])
+            owners = delivered.get('selected_candidates', [])
+            if not proofs or {p.get('owner') for p in proofs} != set(owners):
+                issues.append('在办量要求缺少每个候选同一快照的数量与案件集合')
+            for proof in proofs:
+                ids = proof.get('active_case_ids')
+                count = proof.get('active_count')
+                if (type(count) is not int or count < 0 or not isinstance(ids, list)
+                        or any(not isinstance(v,str) or not v for v in ids)
+                        or len(ids) != len(set(ids)) or count != len(ids)
+                        or proof.get('as_of') != request.as_of):
+                    issues.append('候选在办数量、唯一案件集合或基准日不一致')
         if selected_due_statuses(request):
             for field, words in [('draft_due_date',r'初稿|所限'), ('client_review_due_date',r'客户送审|客户期限'), ('filing_due_date',r'向局提交|提交期限|交局期限')]:
                 if re.search(words, text) and request.due_field != field:
@@ -499,7 +520,19 @@ def verify(request, payload, evidence, report):
     # claims, changed deadlines, switched owners/citations) invalidate the seal.
     if report != render(payload, request):
         fail('固定流程正文偏离已核对的只读渲染，不能添加自由推断')
-    return {'version': 1, 'status': 'failed' if issues else 'passed', 'issues': issues,
+    source_binding={'status':'failed' if issues else 'passed','issues':list(issues)}
+    from casework.archive_readback import final_check
+    context_check=final_check(request.retrieval_query or request.query,evidence,report)
+    if request.operation=='archive' and payload.get('evidence_readback',{}).get('status')=='unverified':
+        if not context_check['issues']:
+            context_check['issues'].append('案件证据不足：独立回读仍有未解决的关键缺口')
+        context_check['status']='unverified'
+        context_check['evidence_completeness']['status']='unverified'
+        context_check['answer_support']['status']='unverified'
+    issues.extend(context_check['issues'])
+    return {'version': 1, 'status': 'failed' if source_binding['status']=='failed' else 'unverified' if context_check['issues'] else 'passed', 'issues': issues,
+            'source_binding':source_binding,'evidence_completeness':context_check['evidence_completeness'],
+            'answer_support':context_check['answer_support'],
             'checked_claims': len(claims), 'claims': claims,
             'report_sha256': hashlib.sha256(report.encode()).hexdigest(),
             'evidence_sha256': store.digest(evidence),

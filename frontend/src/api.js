@@ -39,7 +39,7 @@ export function waitForWS(ws) {
 
 // REST 封装（开发期经 Vite 代理转发到 FastAPI）
 
-export async function submitTask(query, threadId, taskQuery = '', requirePdf = false, maxRounds = 3, expectedRevisionId = null, skipRuleVersions = [], roundMode = 'manual', allowedSources = ['db_query', 'knowledge'], clarificationAnswer = null) {
+export async function submitTask(query, threadId, taskQuery = '', requirePdf = false, maxRounds = 3, expectedRevisionId = null, skipRuleVersions = [], roundMode = 'manual', allowedSources = ['db_query', 'knowledge'], clarificationAnswer = null, productContext = null) {
   const res = await fetch('/api/task', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -53,6 +53,7 @@ export async function submitTask(query, threadId, taskQuery = '', requirePdf = f
       skip_rule_versions: skipRuleVersions,
       thread_id: threadId,
       allowed_sources: allowedSources,
+      ...(productContext ? {product_context:productContext} : {}),
       ...(clarificationAnswer ? {clarification_answer:clarificationAnswer} : {}),
     }),
   })

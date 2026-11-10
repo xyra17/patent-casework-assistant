@@ -83,6 +83,13 @@ def _table_changes(left, right, keys, left_sheet, right_sheet):
 
 
 def _document_lines(path):
+    if path.suffix.lower() in ('.txt', '.md'):
+        from tools.attachment_tables import read_text
+        text = read_text(path)
+        if not text.strip() or len(text) > MAX_TEXT_CHARS or len(text.splitlines()) > MAX_TEXT_LINES:
+            raise ValueError('原件为空或超过文本比较上限')
+        return [{'text': line, 'location': f'物理第{i}行（含标题与空行）'}
+                for i, line in enumerate(text.splitlines(), 1)]
     units = parse_document(path)
     if not units:
         raise ValueError(f'{path.name}未解析出可用文字；扫描件须先提供可读文本')
@@ -97,18 +104,18 @@ def _document_lines(path):
     return lines
 
 
-def _document_changes(left,right):
+def _document_changes(left,right,include_unchanged=False):
     a,b = _document_lines(left),_document_lines(right)
     matcher = difflib.SequenceMatcher(a=[line['text'] for line in a],b=[line['text'] for line in b],autojunk=True)
     changes = []
     for kind,i,j,k,l in matcher.get_opcodes():
-        if kind == 'equal':
+        if kind == 'equal' and not include_unchanged:
             continue
         # Count each aligned changed line once; surplus lines are additions or
         # deletions. A SequenceMatcher replace hunk is not one semantic change.
         for start in range(max(j-i,l-k)):
             old,new = a[i+start:min(j,i+start+1)],b[k+start:min(l,k+start+1)]
-            changes.append({'kind':'modified' if old and new else 'added' if new else 'deleted',
+            changes.append({'kind':'unchanged' if kind == 'equal' else 'modified' if old and new else 'added' if new else 'deleted',
                             'left':{'lines':old} if old else None,'right':{'lines':new} if new else None})
     return changes,[{'file':left.name,'total_lines':len(a)},{'file':right.name,'total_lines':len(b)}]
 
@@ -130,12 +137,13 @@ def _page(changes,offset,limit):
 @tool
 def compare_uploaded_files(left_filename: str, right_filename: str, key_columns: list[str] | None = None,
                            left_sheet: str | None = None, right_sheet: str | None = None,
-                           offset: int = 0, limit: int = 20) -> str:
+                           offset: int = 0, limit: int = 20, include_unchanged: bool = False) -> str:
     """只读对比当前会话的两份附件，返回可定位到左右原文的增删修改与真实证据编号。
 
     文档支持DOCX/PDF/TXT/MD，按解析文本比较，不判定法律或技术等价性，不比较图片和版式。
     两表支持CSV/XLSX/XLS，须先用read_file_content查看实际表头和工作表，再传双方共有且非空唯一的key_columns（如所编号），不按行号猜关联。
     left为基准、right为对比版；多工作表应明确指定，未指定时只比较各自第一张表，结果声明所选工作表。
+    include_unchanged=true时同时返回未变化的文本行，仅用于文字对齐，不判断机制关系。
     offset为差异条目偏移；limit为1～100。truncated=true时继续next_offset分页，不能把当前页当全量差异。
     """
     try:
@@ -151,7 +159,7 @@ def compare_uploaded_files(left_filename: str, right_filename: str, key_columns:
         if document_mode and (key_columns or left_sheet or right_sheet):
             raise ValueError('文档比较不接受表格关联列或工作表参数')
         changes, metadata = (_table_changes(left,right,key_columns,left_sheet,right_sheet) if table_mode
-                             else _document_changes(left,right))
+                             else _document_changes(left,right,include_unchanged))
         if offset > len(changes):
             raise ValueError(f'offset超过差异条目总数{len(changes)}')
         selected = _page(changes,offset,limit)
@@ -172,11 +180,12 @@ def compare_uploaded_files(left_filename: str, right_filename: str, key_columns:
                                                      'returned_offset':offset,'returned_count':len(selected)},
                                       'excerpts':excerpts},ensure_ascii=False),
                 'comparison_scope':info,'comparison_side':side,'comparison_counts':counts,
+                'comparison_records':selected,'comparison_offset':offset,'comparison_complete':offset+len(selected)==len(changes),
             }))
         next_offset = offset+len(selected)
         result = {'status':'compared','mode':'keyed_table' if table_mode else 'document_text',
                   'left':{**metadata[0],'evidence_id':refs[0]},'right':{**metadata[1],'evidence_id':refs[1]},
-                  'total_changes':len(changes),'edit_counts':counts,'count_unit':'按对齐文本行计数；连续差异块不等于技术修改项数' if document_mode else '按关联记录计数',
+                  'total_changes':sum(counts.values()),'total_records':len(changes),'includes_unchanged':include_unchanged,'edit_counts':counts,'count_unit':'按对齐文本行计数；连续差异块不等于技术修改项数' if document_mode else '按关联记录计数',
                   'location_policy':'只报告解析器提供的页码、正文块或片段行号；未取得页码不代表原文件没有分页',
                   'offset':offset,'changes':selected,
                   'truncated':next_offset<len(changes),'next_offset':next_offset if next_offset<len(changes) else None,

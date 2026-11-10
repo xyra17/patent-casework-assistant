@@ -74,11 +74,20 @@ def validation_improved(previous, current):
 def repair_plan(result, issues):
     report = result['report']
     evidence = result.get('evidence', [])
-    spans = []
+    spans = []; atomic_names = set()
     hard = result.get('repair_hard_issues', issues)
     for issue in hard:
         if issue.startswith('直接引文与所引片段不匹配'):
             spans += [m.span() for m, _, _, _, _, supported in _quoted_bindings(report, evidence) if not supported]
+        elif issue.startswith('案号与名称不一致：'):
+            from casework.parser import CASE_RE
+            bad=re.search(r'案号与名称不一致：(.+?)所称《([^》]+)》',issue)
+            if not bad:return None
+            for case in CASE_RE.finditer(report):
+                title=re.match(r'[\s*·:：—-]*《([^》]+)》',report[case.end():])
+                if case.group().upper()==bad[1] and title and title[1]==bad[2]:
+                    span=(case.end()+title.start(1),case.end()+title.end(1))
+                    spans.append(span);atomic_names.add(span)
         elif issue.startswith('统计核验：'):
             from tools.statistics_check import statement_units
             ids={int(n)-1 for n in re.findall(r'片段 (\d+)',issue)}
@@ -100,9 +109,9 @@ def repair_plan(result, issues):
             spans += [m.span() for m in re.finditer(
                 r'[^\n]*(?:仅出现|只出现|唯一|(?:正文|全文|原件).{0,16}(?:没有|未见|未记载|未给出))[^\n]*',report)]
         elif issue.startswith('案件引用身份不匹配'):
-            ident=re.search(r'AI-\d{4}-\d{3}',issue)
-            if ident:
-                spans += [m.span() for m in re.finditer(r'(?m)^[^\n]*'+re.escape(ident[0])+r'[^\n]*$',report)]
+            from tools.citation_scope import case_ref_identity_checks
+            spans += [(c['span']['start'],c['span']['end']) for c in case_ref_identity_checks(report,evidence)
+                      if c['status']=='failed']
         elif issue.startswith('删除时机缺少原文依据'):
             spans += [m.span() for m in re.finditer(r'[^\n]*(?:立即|实时|同步)(?:物理)?删除[^\n]*',report)]
         elif issue.startswith('资料性质自相矛盾'):
@@ -143,6 +152,8 @@ def repair_plan(result, issues):
     # Edit complete paragraphs/tables, never splice a clause into its negation.
     expanded = []
     for start, end in spans:
+        if (start,end) in atomic_names:
+            expanded.append((start,end));continue # An exact identity field, not a semantic clause.
         if start == end == len(report):
             expanded.append((start, end))
             continue
@@ -175,21 +186,60 @@ def repair_plan(result, issues):
         for i, (start, end) in enumerate(merged)], 'issues': issues}
 
 
+class PatchError(ValueError):
+    """Public diagnostics contain only controlled reasons, never source text."""
+    def __init__(self, code, message, **details):
+        super().__init__(message)
+        self.code, self.details = code, details
+
+
+def patch_failure_audit(exc, report, plan):
+    code=getattr(exc,'code','PATCH_EXECUTION_ERROR')
+    stage={'PATCH_CONTEXT_BUDGET':'context_projection','PATCH_RESPONSE_INVALID':'response_parse',
+           'PATCH_EXECUTION_ERROR':'repair_answer'}.get(code,'apply_edits')
+    return {'mode':'located_patch','status':'rejected','exception_type':type(exc).__name__,
+            'code':code,
+            'reason':str(exc) if isinstance(exc,PatchError) else '局部修订执行异常，详细输入见本地诊断记录',
+            'stage':stage,
+            'details':getattr(exc,'details',{}),
+            'report_sha256':hashlib.sha256(report.encode()).hexdigest(),
+            'expected_report_sha256':plan.get('report_sha256'),
+            'planned_unit_count':len(plan.get('units',[]))}
+
+
+def validate_patch_units(report, units):
+    ids=[u['unit_id'] for u in units]
+    if len(ids)!=len(set(ids)):
+        raise PatchError('PATCH_DUPLICATE_UNIT_ID','修订计划包含重复单元ID')
+    previous_end=-1;previous_start=-1
+    for unit in sorted(units,key=lambda u:u['start']):
+        start,end=unit['start'],unit['end']
+        if type(start) is not int or type(end) is not int or not 0<=start<=end<=len(report):
+            raise PatchError('PATCH_SPAN_OUT_OF_BOUNDS','修订单元区间越界')
+        if start<previous_end or start==previous_start:
+            raise PatchError('PATCH_SPAN_OVERLAP','修订单元区间重叠或同点重复插入')
+        if report[start:end]!=unit['original']:
+            raise PatchError('PATCH_ORIGINAL_MISMATCH','修订单元原文不匹配')
+        previous_start,previous_end=start,end
+
+
 def apply_edits(report, plan, edits):
     if hashlib.sha256(report.encode()).hexdigest() != plan['report_sha256']:
-        raise ValueError('修订草稿版本已改变')
+        raise PatchError('PATCH_VERSION_MISMATCH','修订草稿版本已改变')
+    validate_patch_units(report,plan['units'])
     units = {u['unit_id']: u for u in plan['units']}
     changes = {e.unit_id: e.replacement for e in edits.edits}
     if len(changes) != len(edits.edits) or changes.keys() != units.keys():
-        raise ValueError('修订只能逐项覆盖已定位的失败单元')
+        raise PatchError('PATCH_UNIT_SET_MISMATCH','修订只能逐项覆盖已定位的失败单元',
+                         planned_count=len(units),returned_count=len(edits.edits),unique_returned_count=len(changes))
     patched = report
     for unit in sorted(units.values(), key=lambda u: u['start'], reverse=True):
         start, end = unit['start'], unit['end']
         if report[start:end] != unit['original']:
-            raise ValueError('修订单元原文不匹配')
+            raise PatchError('PATCH_ORIGINAL_MISMATCH','修订单元原文不匹配')
         replacement = changes[unit['unit_id']]
         if not replacement.strip():
-            raise ValueError('不能删除失败单元来规避验收')
+            raise PatchError('PATCH_EMPTY_REPLACEMENT','不能删除失败单元来规避验收')
         if start == end == len(report):
             replacement = '\n\n' + replacement
         patched = patched[:start] + replacement + patched[end:]
@@ -199,6 +249,16 @@ def apply_edits(report, plan, edits):
 async def repair_answer(report, plan, items, query, get_llm):
     """One bounded call; a patch never inherits a passed review automatically."""
     from tools.review_evidence import pack_review_evidence
+    from api import context, storage
+    def persist(kind, value):
+        thread=context.get_thread_id()
+        if not thread:return
+        payload=json.dumps(value,ensure_ascii=False,default=str)
+        digest=hashlib.sha256(payload.encode()).hexdigest()
+        storage.save_context_artifact(thread,digest,payload)
+        storage.record_context_decision(thread,'repair',{'event':'patch_diagnostic','kind':kind,'artifact_ref':digest,
+            'round':context.get_round(),'report_sha256':hashlib.sha256(report.encode()).hexdigest()})
+    persist('plan',plan)
     refs=report_references(report)|set(re.findall(r'S[1-9]\d*',' '.join(plan['issues'])))
     ordered=[i for i in items if i.get('id') in refs or i.get('answer_contract')]
     ordered += [i for i in reversed(items) if i not in ordered]
@@ -226,11 +286,13 @@ async def repair_answer(report, plan, items, query, get_llm):
     manager.require_fit(projection)
     # Do not compress away failed units or the draft fingerprint for patching.
     if projection.decision.get('before_tokens')!=projection.decision.get('after_tokens'):
-        raise ValueError('局部修订输入超过完整保留预算')
+        raise PatchError('PATCH_CONTEXT_BUDGET','局部修订输入超过完整保留预算')
     response = await asyncio.wait_for(model.ainvoke(messages),
         timeout=float(os.getenv('LLM_TIMEOUT', '90')))
+    persist('response',response if not isinstance(response,dict) else
+            {k:v.model_dump() if hasattr(v,'model_dump') else str(v) if isinstance(v,Exception) else v for k,v in response.items()})
     if not isinstance(response, dict) or response.get('parsing_error') or response.get('parsed') is None:
-        raise ValueError('局部修订结构无效')
+        raise PatchError('PATCH_RESPONSE_INVALID','局部修订结构无效')
     edits = response['parsed']
     if not isinstance(edits, AnswerEdits):
         edits = AnswerEdits.model_validate(edits)

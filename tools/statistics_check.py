@@ -169,6 +169,13 @@ def reported_time(text, *, year_cell=False):
             start, end = (date.fromisoformat(v).isoformat() for v in explicit.groups())
             return [{'start': start, 'end': end}] if start < end else [{'unsupported': True}]
         except ValueError: return [{'unsupported': True}]
+    iso_range = re.search(r'(\d{4}-\d{2}-\d{2})\s*(?:至|到|—|～)\s*(\d{4}-\d{2}-\d{2})',text)
+    if iso_range:
+        try:
+            start,end=map(date.fromisoformat,iso_range.groups())
+            if not re.search(r'不含(?:末日|结束日)|左闭右开',text):end+=timedelta(days=1)
+            return [{'start':start.isoformat(),'end':end.isoformat()}] if start<end else [{'unsupported':True}]
+        except ValueError:return [{'unsupported':True}]
     chinese_range = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日(?:至|到|—|～)(?:(\d{4})年)?(?:(\d{1,2})月)?(\d{1,2})日', text)
     if chinese_range:
         try:
@@ -304,13 +311,18 @@ def program_statement_claims(units, sources):
     Returns the claims plus the ids of units fully covered by them; anything else
     still goes through model extraction.
     """
-    registered={_normalized(name) for item in sources
+    registered={_normalized(metric_label(name)) for item in sources
                 for metric in item['statistics'].get('metrics',[]) for name in metric.get('names',[])}
+    surface_names={name for item in sources for metric in item['statistics'].get('metrics',[])
+                   if metric.get('definition_verified') and metric.get('column') in ('active_count','unknown_stage_count')
+                   for name in metric.get('names',[]) if name}
+    direct=re.compile(r'(?P<name>'+ '|'.join(re.escape(n) for n in sorted(surface_names | {name for _,name in _PROGRAM_METRICS if not re.search(r'[()?]',name)},key=len,reverse=True)) +
+        r')(?:\s|[*_：:]|为|是|共计|合计|总计|共)*(?P<value>'+NUMBER.pattern+r')') if surface_names else _PROGRAM_SHAPE
     claims=[];covered=set()
     for unit in units:
         if unit['header']:continue
         found=[];spans=set()
-        for match in _PROGRAM_SHAPE.finditer(unit['text']):
+        for match in direct.finditer(unit['text']):
             name=match.group('name');value=match.group('value');start=match.start('value')
             if _normalized(metric_label(name)) not in registered:continue
             if not any(start==a or a<=start<b for a,b in unit['numbers']):continue
@@ -350,7 +362,8 @@ def _heading_metric(headings, sources):
 
 def table_claims_for(units, sources):
     """Read both metric columns and metric rows; bind scope per actual cell."""
-    registered={_normalized(n) for item in sources for m in item['statistics'].get('metrics',[]) for n in m.get('names',[])}
+    registered={_normalized(metric_label(n)) for item in sources
+                for m in item['statistics'].get('metrics',[]) for n in m.get('names',[])}
     claims=[]
     for unit in units:
         if not unit['header']:continue
@@ -409,6 +422,15 @@ def _match_claim(claim, unit, sources, report=''):
     value, unit_name = parse_quantity(quantity)
     metric_text = claim.metric_text.strip('* ')
     metric_name = metric_label(metric_text)
+    comparison_mode = bool(re.search(r'相同|相等|均为|一致|分别为', text))
+    if comparison_mode:
+        # Model extraction may include the comparison suffix in metric_text
+        # (e.g. “在办案件数量相同（均为”); bind the surface to the longest
+        # registered metric occurring before the value.
+        registered_before = [name for item in sources for metric in item.get('statistics',{}).get('metrics',[])
+                             for name in metric.get('names',[]) if name and name in text[:start]]
+        if registered_before:
+            metric_name=max(registered_before,key=len)
     if not header and re.fullmatch(r'数量|件数|数值|值', metric_name):
         inferred = _heading_metric(unit['headings'], sources)
         if inferred:
@@ -422,11 +444,13 @@ def _match_claim(claim, unit, sources, report=''):
     if not unit_name and metric_unit:
         unit_name = metric_unit[1]
     if not header:
-        registered = {name for item in sources for metric in item['statistics'].get('metrics', []) if metric.get('definition_verified') for name in metric.get('names', [])}
+        registered = {name for item in sources for metric in item['statistics'].get('metrics', [])
+                      if metric.get('definition_verified') for name in metric.get('names', [])}
         matches = []
         for name in registered:
-            if name not in metric_name or name not in text[:start]: continue
-            prefix, suffix = metric_name.split(name, 1)
+            canonical = metric_label(name)
+            if canonical not in metric_name or (name not in text[:start] and canonical not in text[:start]): continue
+            prefix, suffix = metric_name.split(canonical, 1)
             if prefix not in ('', '各办理阶段', '各阶段', '全部', '当前', '本次', '在办', '仍在办理') or suffix not in ('', '合计', '总计', '共计', '明细', '案件明细', '案号', '的案号'): continue
             matches.append(name)
         if matches:
@@ -448,10 +472,22 @@ def _match_claim(claim, unit, sources, report=''):
         gap = before[position+len(claim.metric_text):] if position >= 0 else None
         if gap is not None:
             gap = re.sub(r'^(?:案件明细|明细|的案号|案号)', '', gap)
+        comparison_mode = bool(re.search(r'相同|相等|均为|一致|分别为', text))
         # "实际收案（2件）：…" states the same value in parentheses.
         wrapped = gap in ('（','(') and bool(re.match(r'\s*[）)]', tail))
         if not wrapped and (gap is None or not re.fullmatch(r'(?:\s|[*_：:]|为|是|达到|达|共计|合计|总计|共|大约|约|四舍五入后)*', gap)):
-            return None,'指标与数值不是直接陈述，比较或增长等派生结论需单独查询依据'
+            if not comparison_mode:
+                return None,'指标与数值不是直接陈述，比较或增长等派生结论需单独查询依据'
+            # A comparison such as “两位候选人的在办案件数量相同（均为8件）”
+            # is valid only when the canonical metric is present and every
+            # compared dimension is bound to a source row below.  Normalize
+            # the surface phrase to that canonical metric; do not accept a
+            # bare number or keyword-only comparison.
+            registered_names = [name for item in sources for metric in item.get('statistics',{}).get('metrics',[])
+                                for name in metric.get('names',[]) if name and name in before]
+            if not registered_names:
+                return None,'比较声明缺少可绑定的来源指标名称'
+            metric_name=max(registered_names,key=len)
         if re.match(r'以上|以下|左右之外',tail):
             return None,'不等式或范围陈述暂不能作为精确值通过'
     refs = set(re.findall(r'\[(S\d+)\]',text + '\n' + unit['headings']))
@@ -463,7 +499,7 @@ def _match_claim(claim, unit, sources, report=''):
         for metric in item['statistics'].get('metrics',[]):
             if not metric.get('definition_verified'):
                 reasons.append('来源指标定义无法自动核验，请使用已定义语义指标'); continue
-            if not time_only and _normalized(metric_name) not in {_normalized(n) for n in metric['names']}:
+            if not time_only and _normalized(metric_name) not in {_normalized(metric_label(n)) for n in metric['names']}:
                 reasons.append('指标名称与来源定义不一致'); continue
             for index,row in enumerate(item.get('rows') or []):
                 if metric['index'] >= len(row): continue
@@ -501,6 +537,9 @@ def _match_claim(claim, unit, sources, report=''):
                     snapshots=re.findall(r'基准日\s*[:：]?\s*('+ISO_DATE.pattern+')',unit.get('local_context',''))
                     if snapshots: heading_time=reported_time(' '.join(snapshots))
                 scope_time=declared_scope_time(unit.get('scope',''))
+                if (expected_time.get('status')=='unbounded' and not own_time
+                        and '不归月' in text and '所有办理阶段' in text):
+                    heading_time=[];scope_time=[] # An explicit all-stage undated population is not the title's month.
                 primary=own_time or heading_time or scope_time
                 intersection=_intersect(primary)
                 if expected_time.get('field')=='month_comparison' and len(primary)>1 and not any(t.get('unsupported') for t in primary):
@@ -539,8 +578,15 @@ def _match_claim(claim, unit, sources, report=''):
                                 'expected_value':str(actual),'source_unit':source_unit,
                                 'time':expected_time,'dimensions':dimensions})
     if not matches: return None, '；'.join(dict.fromkeys(reasons)) or '没有对应的数据库统计来源'
-    if len({json.dumps({k:m[k] for k in ('expected_value','source_unit','time','dimensions')},sort_keys=True) for m in matches})>1:
+    signatures={json.dumps({k:m[k] for k in ('expected_value','source_unit','time')},sort_keys=True) for m in matches}
+    if len(signatures)>1:
         return None,'相同表述对应多个范围不同的来源，需明确引用和口径'
+    if len(matches)>1 and not comparison_mode:
+        return None,'相同表述对应多个范围不同的来源，需明确引用和口径'
+    if comparison_mode and len(matches)>1:
+        missing_dimensions={d for m in matches for d in m.get('dimensions',[]) if d not in text}
+        if missing_dimensions:
+            return None,'比较声明未逐项绑定所有分组对象：'+ '、'.join(sorted(missing_dimensions))
     return {'unit_id':unit['id'],'metric_text':claim.metric_text,'value_text':quantity,
             'value_span':[start,token.end()],'sources':matches}, None
 

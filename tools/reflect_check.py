@@ -23,11 +23,21 @@ def hard_check(result: dict) -> list[str]:
     """
     report = result.get("report", "")
     issues: list[str] = []
+    from casework.archive_readback import final_check
+    archive_check=final_check(result.get('query',''),result.get('evidence',[]),report)
+    result['archive_evidence_check']=archive_check
+    issues.extend(archive_check['issues'])
     if result.get('execution_issue'):
         issues.append('执行尚未完成：'+result['execution_issue'])
 
     if re.search(r'<[｜|]{1,2}.*?(?:DSML|invoke|parameter)|<tool_call>|<function_calls>',report,re.I):
         issues.append('答案泄漏工具调用标记：须实际执行工具并交付用户可读结果，不能把调用协议作为答案')
+
+    from tools.source_delivery import original_location_issues, source_line_issues, case_title_issues, dedup_aggregation_issues
+    issues.extend(original_location_issues(result.get('query',''), report, result.get('evidence',[])))
+    issues.extend(source_line_issues(report, result.get('evidence',[])))
+    issues.extend(case_title_issues(report, result.get('evidence',[])))
+    issues.extend(dedup_aggregation_issues(result.get('query',''), result.get('evidence',[])))
 
     # H2 占位符
     if has_placeholders(report):
@@ -38,7 +48,8 @@ def hard_check(result: dict) -> list[str]:
 
     from tools.chart_utils import chart_delivery_issues
     issues.extend(chart_delivery_issues(result.get('query',''),result.get('evidence',[]),report))
-    from tools.answer_contracts import workload_summary_date_issues,case_date_provenance_issues
+    from tools.answer_contracts import workload_summary_date_issues,case_date_provenance_issues,workload_completion_issues
+    issues.extend(workload_completion_issues(result.get('query',''),report,result.get('evidence',[])))
     issues.extend(workload_summary_date_issues(result.get('query',''),result.get('evidence',[])))
     issues.extend(case_date_provenance_issues(result.get('query',''),report,result.get('evidence',[])))
 
@@ -125,6 +136,33 @@ def hard_check(result: dict) -> list[str]:
         if web_ids and not cited & web_ids:
             issues.append('公开比较未引用已取得的网络证据：逐项将公开方法的事实绑定实际网页片段；不能凭记忆补全粒度、校准或机制。片段不足则明确比较缺口。')
 
+    # RRF is a rank-fusion contract, not merely a generic “combine results”
+    # statement.  When the task explicitly asks for the official RRF
+    # explanation, the answer must state the reciprocal/rank contribution (or
+    # an equivalent formula) and distinguish it from adding raw similarity
+    # scores.  This is a reusable domain guard keyed to the requested concept,
+    # never to a question id or a fixed answer string.
+    if re.search(r'RRF|reciprocal\s+rank\s+fusion|倒数融合', query, re.I):
+        has_reciprocal = bool(re.search(r'倒数|reciprocal|1\s*/\s*\(?\s*(?:k|rank|排名)|1\s*/\s*\(', report, re.I))
+        has_raw_score_boundary = bool(re.search(r'不(?:直接)?相加|不把[^。；\n]{0,20}(?:相似|原始|相关性)分(?:数)?相加|raw\s+similarity', report, re.I))
+        if not has_reciprocal:
+            issues.append('RRF机制说明不完整：须说明按排名的倒数贡献或等价公式；仅说合并排名不能代替倒数融合。')
+        if not has_raw_score_boundary:
+            issues.append('RRF机制边界未说明：须明确不直接相加不同检索器的原始相似分。')
+
+    # Text comparison is allowed to classify line-level changes as added,
+    # deleted, modified, or indeterminate.  It must not silently promote two
+    # different sentences into a mechanism/causal replacement claim.  Such a
+    # claim is only safe when the answer explicitly limits itself to wording
+    # or states that the substantive relationship is unknown.
+    if re.search(r'逐条比较|两侧原句|基准.*修订|修订.*基准', query):
+        for sentence in re.split(r'[。；\n]', report):
+            if not re.search(r'由.{0,80}(?:改为|替换为|变更为)|(?:机制|规则|触发条件|时机|效果).{0,30}(?:改变|替换|转为)', sentence):
+                continue
+            if re.search(r'文字|字句|行级|仅.*比较|无法确定|未载明|不作.*定性|不判定', sentence):
+                continue
+            issues.append('文本比较越界：已发现行级文字差异，但未见原文直接支持机制/因果替换关系；应限定为文字变化或保留无法确定。')
+
     comparisons=[i for i in result.get('evidence',[]) if i.get('comparison_counts')]
     if any(i['comparison_counts'].get('modified',0)>0 for i in comparisons):
         plain=report.replace('**','')
@@ -153,14 +191,14 @@ def hard_check(result: dict) -> list[str]:
     case_check=check_case_answer(result)
     if case_check['status']=='failed':issues.extend('案卷关联核验：'+issue for issue in case_check['issues'])
     business = result.get('business_check') or {}
-    if business.get('status') == 'failed':
-        issues.extend('业务事实核验：' + issue for issue in business.get('issues', ['字段或原文未绑定']))
+    if business.get('status') in ('failed', 'unverified'):
+        issues.extend('业务事实核验：' + issue for issue in (business.get('issues') or ['字段或必要证据未核验']))
     from tools.content_verification import archive_absence_issues, mechanism_adoption_issues
     issues.extend(archive_absence_issues(report,result.get('evidence',[])))
     issues.extend(mechanism_adoption_issues(report,result.get('evidence',[]),result.get('query','')))
     from tools.content_verification import unsupported_reasoning_issues
     issues.extend(unsupported_reasoning_issues(report,result.get('evidence',[]),result.get('query','')))
-    return issues
+    return list(dict.fromkeys(issues))
 
 
 if __name__ == "__main__":

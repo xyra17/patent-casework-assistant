@@ -35,7 +35,11 @@ def report_references(report):
 
 # Only directly bound long literal quotations enter this deterministic check.
 # Paraphrases and inferred claims remain subject to semantic review.
-_QUOTED_REF = re.compile(r'“([^”\n]{12,})”[\s*_]*((?:\[S[1-9]\d*\]\s*)+)|「([^」\n]{12,})」[\s*_]*((?:\[S[1-9]\d*\]\s*)+)')
+_QUOTED_REF = re.compile(r'“([^”\n]{12,})”[\s*_]*((?:\[S[1-9]\d*\]\s*)+)|「([^」\n]{12,})」[\s*_]*((?:\[S[1-9]\d*\]\s*)+)|"([^"\n]{12,})"[\s*_]*((?:\[S[1-9]\d*\]\s*)+)')
+
+
+def quoted_text_group(match):
+    return next(group for group in (1, 3, 5) if match[group] is not None)
 
 
 def _literal(text):
@@ -62,7 +66,7 @@ def _quote_supported(quote, snippet):
 def _quoted_bindings(report, evidence):
     by_id={i.get('id'):i for i in evidence}
     for match in _QUOTED_REF.finditer(report):
-        group=1 if match[1] is not None else 3
+        group=quoted_text_group(match)
         quote=match[group]; refs=set(_VALID.findall(match[group+1]))
         before=report[max(0,match.start()-40):match.start()].replace('*','').replace('`','')
         if re.search(r'(?:未见|未出现|未检索到|未查到|没有找到)\s*$',before):continue
@@ -70,7 +74,7 @@ def _quoted_bindings(report, evidence):
         # Bracketed source notation and database cell formatting have separate
         # contracts. Do not guess their wording.
         if re.search(r'\[.*?\]',quote):continue
-        textual=[i for i in cited if i.get('type') in ('knowledge','web','upload') and i.get('snippet')]
+        textual=[i for i in cited if i.get('type') in ('knowledge','web','upload','file') and i.get('snippet')]
         if not textual:continue
         yield match,group,quote,refs,textual,any(_quote_supported(quote, i['snippet']) for i in textual)
 
@@ -165,6 +169,8 @@ def normalize_citations(report, evidence):
     if _json_answer(report) is not None:
         return report
     available = {item.get('id') for item in evidence}
+    from tools.source_quotes import render_source_quotes
+    report, _ = render_source_quotes(report, evidence)
     # Normalize an explicit, existing S-id next to a patent paragraph marker.
     # Never invent a source for a numeric marker.
     def bind_explicit_paragraph_ids(match):
@@ -201,7 +207,13 @@ def normalize_citations(report, evidence):
         item=matches[0]
         location=str(item.get('location') or '').strip()
         return line+f"[{item['id']}]"+(f'（{location}）' if location else '')
-    report=re.sub(r'(?m)^>[^\n]+$',bind_blockquote,report)
+    def bind_block(match):
+        block=match[0]
+        # A multiline quote already bound at its end must stay intact. Adding
+        # per-line location labels would insert non-source text into the quote.
+        if report_references(block):return block
+        return re.sub(r'(?m)^>[^\n]+$',bind_blockquote,block)
+    report=re.sub(r'(?m)^[ \t]*>[^\n]*(?:\n[ \t]*>[^\n]*)*',bind_block,report)
     date_proofs={}
     for item in evidence:
         proof=item.get('date_completeness') or {}

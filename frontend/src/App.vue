@@ -17,7 +17,7 @@
             <div class="status-details" aria-label="会话状态统计">
               <strong>会话状态</strong>
               <span>运行中 <b>{{ stats.running }}</b></span>
-              <span>已完成 <b>{{ stats.completed }}</b></span>
+              <span>执行结束 <b>{{ stats.completed }}</b></span>
               <span v-if="stats.awaiting_input">待你确认 <b>{{ stats.awaiting_input }}</b></span>
               <span>失败 <b>{{ stats.failed }}</b></span>
               <span title="执行已结束，但仍有未通过的校验项">未达标 <b>{{ stats.degraded }}</b></span>
@@ -283,7 +283,10 @@ function onEvent(session, ev) {
     session.charts = ev.data?.charts || []
     session.loaded = true
     connections.close(session.thread_id)
-    toast(session.degraded ? 'warning' : 'success', session.degraded ? '已应用兜底：返回最优结果与证据摘要' : '任务完成')
+    const boundary=session.result_assessment?.product_boundary
+    toast(boundary && boundary.status !== 'VERIFIED' || session.degraded ? 'warning' : 'success',
+      boundary ? ({VERIFIED:'客观结果已核验',REVIEW_REQUIRED:'专业判断待人工确认',INCOMPLETE:'任务未完成，已保留候选和原因',BLOCKED:'任务已拦截'}[boundary.status] || '结果待核验')
+      : session.degraded ? '返回部分结果与未完成原因' : '执行结束，请查看分项审查')
   } else if (ev.event === 'task_cancelled') {
     session.status = 'cancelled'
     session.stop_reason = 'user_cancel'
@@ -312,7 +315,7 @@ async function executeSession(session, clarificationAnswer = null) {
     let started
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        started = await submitTask(session.query, threadId, session.task_query || session.query, session.require_pdf, session.max_rounds || 3, expectedRevisionId, skipped, session.round_mode || 'manual', session.allowed_sources || ['db_query','knowledge'], clarificationAnswer)
+        started = await submitTask(session.query, threadId, session.task_query || session.query, session.require_pdf, session.max_rounds || 3, expectedRevisionId, skipped, session.round_mode || 'manual', session.allowed_sources || ['db_query','knowledge'], clarificationAnswer, session.product_context || null)
         break
       } catch (error) {
         if (error.detail?.code !== 'rule_conflict') throw error
@@ -406,6 +409,7 @@ function runToSession(run, withEvents = false) {
     session_dir: run.session_dir ?? sessionEvent?.data?.path ?? '',
     result: run.result || '',
     result_assessment: run.result_assessment || null,
+    product_context: [...(run.events || [])].reverse().find(e=>e.event==='product_boundary_request')?.data || null,
     query_result: run.query_result || null,
     plan: run.plan || planEvent?.data || null,
     hard_rounds: reflectionEvents.map((e) => e.data),
@@ -463,7 +467,7 @@ const MODE_HINTS = {
   report: '\n【任务类型：报告】请生成结构化的分析报告。',
 }
 
-async function startTask(query, requirePdf, mode = 'auto', maxRounds = 'auto', allowedSources = ['db_query','knowledge'], files = [], attachmentContext = '') {
+async function startTask(query, requirePdf, mode = 'auto', maxRounds = 'auto', allowedSources = ['db_query','knowledge'], files = [], attachmentContext = '', productContext = null) {
   sidebarTab.value = 'sessions'
   let taskQuery = query + attachmentContext + (MODE_HINTS[mode] || '')
   if (requirePdf) {
@@ -476,6 +480,8 @@ async function startTask(query, requirePdf, mode = 'auto', maxRounds = 'auto', a
   const session = addSession(threadId, query, forcePdf)
   session.round_mode = maxRounds === 'auto' ? 'auto' : 'manual'
   session.max_rounds = maxRounds === 'auto' ? 3 : maxRounds
+  const profiles=['case-materials','document-comparison','disclosure-search','public-reference','uploaded-table-analysis']
+  session.product_context=profiles.includes(productContext?.profile) ? productContext : null
   session.task_query = taskQuery
   session.allowed_sources = [...allowedSources]
   return await executeSession(session)
@@ -607,10 +613,12 @@ function focusInput() {
 
 function statusText(status, session) {
   if (session?.preparing) return session.ruleReviewPending ? '待确认' : '核对规则'
+  if (status === 'completed' && session?.result_assessment?.product_boundary) return {VERIFIED:'已核验',REVIEW_REQUIRED:'待人工确认',INCOMPLETE:'未完成',BLOCKED:'已拦截'}[session.result_assessment.product_boundary.status] || '待核验'
   if (status === 'completed' && session?.degraded) return '未达标'
   return { running: '运行中', completed: '已完成', failed: '失败', cancelled:'已取消', awaiting_input:'待你确认' }[status] || status
 }
 function statusTagType(status, session) {
+  if (status === 'completed' && session?.result_assessment?.product_boundary) return {VERIFIED:'success',REVIEW_REQUIRED:'warning',INCOMPLETE:'warning',BLOCKED:'danger'}[session.result_assessment.product_boundary.status] || 'info'
   if (status === 'completed' && session?.degraded) return 'warning'
   return { running: 'primary', completed: 'success', failed: 'danger',awaiting_input:'warning' }[status] || 'info'
 }

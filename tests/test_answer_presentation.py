@@ -87,7 +87,8 @@ class AnswerPresentationTests(unittest.TestCase):
             result = build_fallback(thread_id='test', query='查日期', best_report='',
                 issues=['CONTEXT_LIMIT 内部核验指令：不准用会议时间补位'],
                 evidence_gaps=[{'missing': '内部调度：改查文件并增加轮次'}])
-        self.assertIn('未能完成', result)
+        self.assertIn('尚未核对通过', result)
+        self.assertIn('【未达标说明】', result)
         for text in ['CONTEXT_LIMIT', '内部调度', '调整最多处理轮次', '补充更明确的指标', '会议时间补位']:
             self.assertNotIn(text, result)
 

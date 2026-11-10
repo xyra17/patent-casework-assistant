@@ -271,7 +271,44 @@ def _confirmed_ocr_tables(evidence: list[dict]) -> list[dict]:
                 or not item.get('content_complete') or not item.get('id')):
             continue
         content = str(item.get('content') or item.get('snippet') or '')
-        for block in re.findall(r'(?m)^\[第\s*\d+\s*页[^\n]*· 表格\]\n((?:\|[^\n]*\n?)+)', content):
+        blocks = re.findall(r'(?m)^\[第\s*\d+\s*页[^\n]*· 表格\]\n((?:\|[^\n]*\n?)+)', content)
+        # MinerU may emit a scanned table as OCR text blocks instead of a
+        # markdown table. Parse only the conservative ``编号 部件 数量`` row
+        # shape; unknown values stay out of numeric chart rows and are retained
+        # as explicit metadata rather than becoming zero.
+        if not blocks and re.search(r'编号\s*部件\s*数量', content):
+            ocr_rows = []
+            row_locations = {}
+            for match in re.finditer(r'(?m)^\s*([A-Za-z][A-Za-z0-9_-]*[0-9][A-Za-z0-9_-]*)\s+([^\n\d]+?)\s+(\d+|未知|未记录|不明)\s*$', content):
+                value = match.group(3)
+                ocr_rows.append([match.group(1), match.group(2).strip(), int(value) if value.isdigit() else None])
+                locations=list(re.finditer(r'(?m)^\[([^\n]+)\]$',content[:match.start()]))
+                if locations:
+                    row_locations[match.group(1)]=locations[-1].group(1)
+                else:
+                    row_locations[match.group(1)]=f'表头下第{len(ocr_rows)}条数据行'
+            if ocr_rows:
+                witnesses = []
+                for other in evidence:
+                    if (other.get('id') == item['id'] or not other.get('visual_observation')
+                            or other.get('revision') != item.get('revision') or other.get('title') != item.get('title')):
+                        continue
+                    observed = str(other.get('content') or other.get('snippet') or '')
+                    if all(any(all(re.search(r'(?<![A-Za-z0-9])'+re.escape(str(value))+r'(?![A-Za-z0-9])', line)
+                                       for value in row) for line in observed.splitlines())
+                           for row in [[r[0], r[1], r[2] if r[2] is not None else '未记录'] for r in ocr_rows]):
+                        witnesses.append(other['id'])
+                if witnesses:
+                    known = [row for row in ocr_rows if isinstance(row[2], int)]
+                    result.append({'id': item['id'], 'type': 'file', 'title': item.get('title'),
+                                   'columns': ['编号','部件','数量'], 'rows': known,
+                                   'unknown_rows': [row[:2] for row in ocr_rows if row[2] is None],
+                                   'row_locations': row_locations,
+                                   'rowCount': len(known), 'total_ocr_rows': len(ocr_rows), 'completeness': {'has_more': False, 'complete': True, 'scope': 'known numeric rows only; unknown rows retained separately'},
+                                   'chart_source_ids': [item['id'], witnesses[0]],
+                                   'chart_derivation': 'ocr_rows_confirmed_by_visual_observation'})
+            continue
+        for block in blocks:
             lines = [line.strip() for line in block.splitlines() if line.strip().startswith('|')]
             if len(lines) < 4:
                 continue
@@ -299,18 +336,47 @@ def _confirmed_ocr_tables(evidence: list[dict]) -> list[dict]:
             rows = [[int(value) if index in numeric else value for index, value in enumerate(row)] for row in data]
             result.append({'id':item['id'],'type':'file','title':item.get('title'),
                            'columns':headers,'rows':rows,'rowCount':len(rows),
+                           'row_locations': {str(r[0]):f'表头下第{idx+1}条数据行' for idx,r in enumerate(rows)},
                            'completeness':{'has_more':False,'complete':True},
                            'chart_source_ids':[item['id'],witnesses[0]],
                            'chart_derivation':'complete_mineru_table_confirmed_by_visual_observation'})
     return result
 
 
+def _case_client_choices(evidence):
+    clients=set()
+    for item in evidence:
+        columns=item.get('columns') or []
+        if '客户简称' not in columns:continue
+        index=columns.index('客户简称')
+        clients.update(row[index] for row in item.get('rows',[]) if len(row)>index and isinstance(row[index],str))
+    return clients
+
+
 def build_chart_items(evidence: list[dict], query: str = '') -> list[dict]:
     """页面与报告共用：一项指标一张图，完全相同的数据视图合并，无数量截断。"""
     if not task_needs_charts(query):
         return []
+    from tools.answer_contracts import workload_summary_scope_issues
+    client_choices=_case_client_choices(evidence)
     result, seen = [], {}
-    for item in [*evidence, *_confirmed_ocr_tables(evidence)]:
+    ocr_tables = _confirmed_ocr_tables(evidence)
+    # Only witnessed known numeric rows enter the chart; unknown rows remain
+    # in metadata and are never converted to zero or hidden as a total.
+    for item in ocr_tables:
+        spec = build_chart_spec(item['columns'], item['rows'], query=query)
+        if spec:
+            spec['completeness'] = item.get('completeness')
+            spec['evidenceId'] = item.get('id')
+            spec['sourceIds'] = item.get('chart_source_ids', [])
+            key = json.dumps({'ocr': item.get('id'), 'spec': spec}, ensure_ascii=False, sort_keys=True)
+            if key not in seen:
+                entry = {**item, 'id': f"{item.get('id', len(result))}:ocr", 'chart': spec}
+                seen[key] = entry
+                result.append(entry)
+    for item in [*evidence]:
+        if workload_summary_scope_issues(query,item,client_choices):
+            continue
         if str(item.get('title', '')).startswith('表预览'):
             continue
         original = item.get('chart') or {}
@@ -401,6 +467,9 @@ def chart_delivery_issues(query, evidence, report=''):
     if not explicit or not task_needs_charts(text):return []
     charts=build_chart_items(evidence,text)
     if not charts:
+        from tools.answer_contracts import workload_summary_scope_issues
+        scope_issues=[issue for item in evidence for issue in workload_summary_scope_issues(text,item,_case_client_choices(evidence))]
+        if scope_issues:return list(dict.fromkeys(scope_issues))
         return ['图表交付缺失：未取得可渲染的图表数据，文字或字符柱不能代替；按实际字段调用结构化分组汇总工具并保留来源，不要手算。']
     grouped=bool(re.search(r'按.+(?:承办人|代理师|人员|领域)|(?:承办人|代理师|人员).{0,8}统计',text))
     if grouped and not any(i.get('group_by') or (i.get('answer_contract') or {}).get('kind')=='workload_summary'

@@ -24,3 +24,20 @@ models/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Local credentials and generated data are never publication inputs.
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.zip
+*.tar
+*.tar.gz
+/examples/department_shared_drive/source/
+/examples/department_shared_drive/expected.json
+/examples/department_shared_drive/eval/

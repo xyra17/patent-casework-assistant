@@ -384,6 +384,12 @@ def render(result,request):
             source=next((p for p in case['sources'] if p['kind'] in ('application','disclosure')),case['sources'][0] if case['sources'] else None)
             if source:
                 lines.extend(['','图中文字（未识别图形或连线关系）：' if source['kind']=='drawing' else ('关联原文片段：' if relation else '待核对候选原文片段：' if case.get('candidate_only') else '可借鉴机制的原文片段：'),'> '+source['excerpt'].replace('\n','\n> ')+f" [{source['evidence_id']}]"])
+            completeness=case.get('evidence_completeness',{})
+            for file_check in completeness.get('files',[]):
+                for fact in file_check.get('facts',[]):
+                    lines.extend(['','所问条件的直接原文：','> '+fact['quote'].replace('\n','\n> ')+f" [{fact['evidence_id']}]"])
+            if completeness.get('status')=='unverified':
+                lines.append('证据不足：尚未取得所问对象的必要条件或状态，当前不能作出确定判断。')
             for drawing in case.get('related_drawings',[]):
                 lines.append('绘图附件：'+cell(drawing['source'])+'。'+drawing['scope']+'；按所编号关联。'+f"[{drawing['evidence_id']}]")
         if not result['results']:lines.append('当前接入资料未找到符合条件的材料。')
@@ -547,7 +553,7 @@ def render(result,request):
 async def execute(request,thread_id,round_num,required_sources):
     from api import context,evidence
     from api.monitor import monitor
-    from tools.casework_tools import query_department_cases,search_case_archive
+    from tools.casework_tools import query_department_cases,search_case_archive,read_case_archive_document
     from casework import store, analytics
     if request.operation=='recommend' and request.recommendation_mode=='technical':
         require_scope(request.archive_intent,request.query,request.model_dump())
@@ -589,6 +595,15 @@ async def execute(request,thread_id,round_num,required_sources):
                     from casework.read_cache import invoke
                     raw=invoke(read_tool,args)
                     results[key]=json.loads(raw)
+                    if request.operation=='archive' and key=='result':
+                        from casework.archive_readback import complete
+                        def read_gap(read_args):
+                            read_event={**event,'tool_name':'read_case_archive_document','args':read_args}
+                            report('tool_start','按证据缺口读取同版本原文',read_event)
+                            value=invoke(read_case_archive_document,read_args)
+                            report('tool_end','原文回读已返回',read_event)
+                            return value
+                        complete(results[key],request.retrieval_query or request.query,read_gap)
                 except Exception as exc:
                     report('tool_error','部门只读查询未完成',{**event,'error':str(exc)})
                     raise
@@ -622,9 +637,11 @@ async def execute(request,thread_id,round_num,required_sources):
     checked=verify(request,result,entries,report)
     from casework.verification import delivery
     output={'report':report,'evidence':entries,'called_sources':sources_for(request),
+            'evidence_readback':result.get('evidence_readback',{}),
             'business_check':checked,
             'business_delivery':delivery(request,result),
-            'execution_contract':{'mode':'fixed_read_only','tools':[t.name for _,t,_ in calls],
+            'execution_contract':{'mode':'fixed_read_only','tools':[t.name for _,t,_ in calls]+[
+                c['tool'] for c in result.get('evidence_readback',{}).get('calls',[])],
                                   'snapshot_version':results['_snapshot_version'],'read_schedule':'sequential_same_snapshot',
                                   'executed_sources':sources_for(request),'allowed_sources':required_sources,
                                   'source_files_written':False,'assignment_saved':False,'artifacts_created':False,

@@ -71,8 +71,8 @@ def explicit_override(rule, quote, query):
     if not quote or quote not in query: return False
     clauses=re.split(r'[，,。；;\n]',quote)
     if rule['category']=='preference':
-        tokens=('回答','回复','句','行','结论','依据','格式','计算式','公式','解释','数字','表格','先','中文','英文','简短','详细','PDF','文件','报告')
-        cue=r'不要|不用|无需|不解释|不列|不提供|不生成|只(?:要|需|用|返回|输出|回答|回复)|仅(?:用|需|返回|输出|回答)|改为|改用|必须|先|请(?:先|只|用)'
+        tokens=('回答','回复','句','行','结论','依据','格式','计算式','公式','解释','数字','表格','先','中文','英文','简短','详细','PDF','文件','报告','新增','删除','修改','逐条','原句','行号','项目')
+        cue=r'不要|不用|无需|不解释|不列|不提供|不生成|只(?:要|需|用|返回|输出|回答|回复)|仅(?:用|需|返回|输出|回答)|改为|改用|必须|先|请(?:先|只|用)|列|逐条'
         return any(re.search(cue,clause) and any(t in clause and t in (rule['content']+rule['subject']) for t in tokens) for clause in clauses)
     cue=r'只统计|仅统计|仅限|不含|含税|扣除|不包括|包括|限定|定义为|改为|改用|不使用默认'
     return any(re.search(cue,clause) and any(t in clause for t in [rule['subject'],*rule['match_terms']]) for clause in clauses)
@@ -123,6 +123,38 @@ def apply_patch(rule,item,query,model=None):
     return {**rule,'binding':binding,'original_binding':rule['binding'],'local_overrides':changes,'current_quote':quote,'reason':item.reason}
 
 
+def scope_exclusion(query,rule):
+    """Recognize one explicit scope exclusion; never bypass executable rules."""
+    scope=rule.get('scope_note') or ''
+    if rule.get('category')!='preference' or rule.get('binding') is not None:return None
+    historical_scope=bool(re.search(r'查询和回顾已有会议记录|仅.{0,8}(?:已有|历史)会议',scope))
+    excludes_preparation=bool(re.search(r'会议计划与未来安排不适用|会前准备不适用',scope))
+    attachment_only=bool(re.search(r'(?:仅|只)(?:依据|看|用|使用|根据)(?:本次|上传的?)?附件',query))
+    prepares=bool(re.search(r'会前|为发明人会议|会议.{0,8}(?:准备|整理)',query))
+    requests_history=bool(re.search(r'查询|回顾|翻查|历史|以前|会议记录|三方会议',query))
+    if historical_scope and excludes_preparation and attachment_only and prepares and not requests_history:
+        return '规则明确限于已有会议回顾并排除会议筹备；当前仅依据附件准备会议，不适用该展示偏好'
+    return None
+
+
+def preference_format_override(rule, query):
+    """Skip a presentation preference when the user specifies a format.
+
+    This is deliberately limited to preference rules whose scope says they do
+    not override an explicit format. It never suppresses business bindings or
+    access/permission rules.
+    """
+    if rule.get('category') != 'preference':
+        return None
+    if rule.get('binding') is not None or not re.search(r'不改变用户明确指定的输出格式|当前(?:任务|要求).{0,6}优先', rule.get('scope_note','')):
+        return None
+    if not re.search(r'格式|列示|表格|结构|输出', rule.get('scope_note','') + rule.get('content','')):
+        return None
+    if re.search(r'逐条.{0,30}比较|(?:列|输出|返回|展示).{0,25}(?:新增|删除|修改|字段|表格)|两侧原句与行号', query):
+        return '当前任务已明确指定输出结构，保留用户格式要求，不适用默认展示偏好'
+    return None
+
+
 async def resolve(query, skips=()):
     from rules.retrieval import retrieve
     active=[{k:v for k,v in r.items() if k not in ('source_snapshot','source_query')} for r in store.list_rules(active_only=True)]
@@ -131,7 +163,12 @@ async def resolve(query, skips=()):
     acknowledged={(s['id'],s['revision']) for s in skips}
     pending=[]
     for rule in candidates:
-        if re.search(r'本次(?:不使用|忽略|跳过)(?:所有)?长期规则',query) or (rule['id'],rule['revision']) in acknowledged:
+        excluded=scope_exclusion(query,rule)
+        if excluded:
+            result['overridden'].append({**rule,'reason':'不适用于本次任务：'+excluded,'scope_check':'explicit_exclusion'})
+        elif (format_override := preference_format_override(rule, query)):
+            result['overridden'].append({**rule,'reason':format_override,'scope_check':'explicit_format'})
+        elif re.search(r'本次(?:不使用|忽略|跳过)(?:所有)?长期规则',query) or (rule['id'],rule['revision']) in acknowledged:
             result['overridden'].append({**rule,'reason':'用户明确要求本次跳过'})
         else: pending.append(rule)
     if not pending: return result
@@ -172,6 +209,13 @@ async def resolve(query, skips=()):
             # A term has no executable binding to patch. A stray model vote
             # cannot turn an otherwise consistent glossary entry into a 409.
             result['applied'].append({**rule,'reason':'术语规则无可局部修改的结构化字段；当前任务未明确重定义该术语'})
+        elif rule['category'] in ('preference','term') and rule.get('binding') is None and item and item.action in ('partial_override','current_overrides','uncertain') and len({r['content'] for r in pending if r['category']==rule['category'] and r['subject'].casefold()==rule['subject'].casefold()})==1:
+            # Nonbinding glossary/presentation defaults have no executable permission or numeric
+            # binding to patch. An invalid model vote must never become a409.
+            # Omit this optional default and preserve the original user task;
+            # do not claim it was independently approved or change business rules.
+            result['overridden'].append({**rule,'reason':'本次非强制默认规则适用性未完成，未应用；当前用户要求保持原样',
+                                         'review_warning':item.reason,'scope_check':'nonbinding_preference_unresolved' if rule['category']=='preference' else 'nonbinding_term_unresolved'})
         elif item and item.action=='partial_override':
             try:
                 adjusted=apply_patch(rule,item,query)

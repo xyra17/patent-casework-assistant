@@ -6,6 +6,10 @@
         <span> {{ item.detail }}</span>
       </el-descriptions-item>
     </el-descriptions>
+    <el-alert v-if="boundary" :title="`业务结果：${boundary.label}`" :type="boundary.type" :closable="false" show-icon>
+      <p v-for="issue in boundary.issues" :key="issue">{{ issue }}</p>
+      <p v-if="boundary.professional_judgments.length">专业结论尚未经人工确认；支持证据和Agent初步分析须分别阅读。</p>
+    </el-alert>
     <el-alert
       v-if="session?.degraded"
       class="degraded-alert"
@@ -40,6 +44,37 @@
 
           <div class="answer-content" tabindex="0" aria-label="执行结果正文，可滚动">
           <el-alert v-if="validationNotice" :title="validationNotice" type="warning" :closable="false" show-icon />
+          <section v-if="boundary?.objective_comparison" aria-label="程序文字比较">
+            <h3>自动文字比较 · {{ boundary.comparisonVerified ? '已核验解析文字' : '未完成' }}</h3>
+            <p>{{ boundary.objective_comparison.reason }}；不表示技术机制相同、替换或可借鉴。</p>
+            <div class="boundary-table-scroll" v-if="boundary.comparisonVerified">
+              <table class="boundary-table"><thead><tr><th>文字关系</th><th>基准原句与位置</th><th>修订原句与位置</th></tr></thead><tbody>
+                <tr v-for="(record,index) in boundary.comparisonRows" :key="index">
+                  <td>{{ {unchanged:'未变化',modified:'文字修改',added:'新增文字',deleted:'删除文字'}[record.kind] || record.kind }}</td>
+                  <td v-for="side in ['left','right']" :key="side">
+                    <span>{{ boundary.objective_comparison[side]?.file }} [{{ boundary.objective_comparison[side]?.evidence_id }}]</span>
+                    <p v-for="(line,i) in record[side]?.lines || []" :key="i">{{ line.location }}：{{ line.text || '（空行）' }}</p>
+                    <span v-if="!record[side]">该侧无对应文字</span>
+                  </td>
+                </tr>
+              </tbody></table>
+            </div>
+          </section>
+          <section v-if="boundary?.professional_judgments.length" aria-label="专业判断待确认">
+            <h3>待人工确认的具体判断</h3>
+            <ul><li v-for="item in boundary.professional_judgments" :key="item.judgment">{{ item.judgment }}：待人工确认。{{ item.reason }}</li></ul>
+            <p>未记录人工审核身份及确认结果。</p>
+          </section>
+          <section v-if="boundary?.sources.length" aria-label="原文与候选依据">
+            <h3>{{ boundary.profile === 'disclosure-search' ? '检索候选与原文依据（检索排序不代表专业结论）' : '原文依据' }}</h3>
+            <article v-for="source in boundary.sources" :key="source.id">
+              <strong>[{{ source.id }}] {{ source.case_id }} {{ source.title }}</strong>
+              <p>来源：{{ source.source || source.title }} · {{ source.valid ? '已保存来源记录' : '来源绑定未完成' }}</p>
+              <p>版本：{{ source.revision || source.content_sha256 }} · 定位：{{ typeof source.location === 'string' ? source.location : JSON.stringify(source.location) }}</p>
+              <blockquote>{{ source.excerpt }}</blockquote>
+            </article>
+          </section>
+          <h3 v-if="boundary">{{ boundary.candidateLabel }}</h3>
           <div v-if="answerContent" class="md-body answer-body" v-html="renderContent(answerContent)" @click="onMarkdownClick"></div>
           <div v-if="session.query_result?.knowledge_applicability?.length" class="answer-version-notes">
             <p v-for="check in session.query_result.knowledge_applicability" :key="check.evidence_id">
@@ -122,9 +157,10 @@ import ClarificationPanel from './ClarificationPanel.vue'
 import { selectCurrentPdf,executionResultContent } from '../previewState'
 import { sessionOutputFiles } from '../sessionFiles'
 import { qualitySummaryText } from '../reflection'
-import { resultAssessmentItems } from '../resultAssessment'
+import { resultAssessmentItems, productBoundaryView } from '../resultAssessment'
 
 const props = defineProps({ session: Object, executionExpanded: Boolean })
+const boundary = computed(() => productBoundaryView(props.session))
 const assessmentItems = computed(() => resultAssessmentItems(props.session))
 const emit = defineEmits(['rerun', 'refresh', 'show-evidence', 'clarify', 'show-files', 'toggle-execution'])
 const activeTab = ref('answer')
@@ -190,7 +226,7 @@ function renderContent(md){
   // Convert citations before sanitizing, never inject links into already-sanitized HTML attributes.
   return DOMPurify.sanitize(parseResultMarkdown(md.replace(/\[(S\d+)\]/g,'<a href="#evidence-$1" class="citation-ref" data-evidence="$1">[$1]</a>')),{ADD_ATTR:['data-evidence']})
 }
-function copyAnswer(){navigator.clipboard.writeText(answerContent.value);toast('success','结果已复制到剪贴板')}
+function copyAnswer(){navigator.clipboard.writeText((boundary.value && boundary.value.status !== 'VERIFIED' ? boundary.value.candidateLabel + '\n\n' : '') + answerContent.value);toast('success','结果已复制到剪贴板')}
 
 watch(
   () => [props.session?.thread_id, props.session?.session_dir, props.session?.status, props.session?.started_at, pdfRequired.value],
@@ -423,4 +459,10 @@ function zoom(v) {
 .copy-answer :deep(.el-icon){margin-right:4px}
 .all-evidence:hover{text-decoration:underline;text-underline-offset:3px}
 .all-evidence:focus-visible{outline:2px solid var(--primary);outline-offset:3px;border-radius:2px}
+</style>
+
+<style scoped>
+.boundary-table-scroll { overflow-x: auto; }
+.boundary-table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+.boundary-table td, .boundary-table th { border: 1px solid var(--border); padding: 8px; text-align: left; vertical-align: top; }
 </style>

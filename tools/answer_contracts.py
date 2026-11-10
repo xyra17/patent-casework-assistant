@@ -69,11 +69,48 @@ def quote_options(item, limit=6):
     return result
 
 
+def _empty_due_block(item):
+    contract=item['answer_contract']
+    status={'overdue':'已过计划期限','next14':'未来两周计划到期','unknown':'期限为空或冲突'}[contract['due_status']]
+    return f"### {status}（基准日 {contract['as_of']}，共0件）\n\n本次完整筛选无符合记录；无案号和承办人可列。[{item['id']}]"
+
+
 def fact_block(item):
     """All workload metrics, definitions and limitations travel as one unit."""
     if item.get('answer_contract_applicable') is False:
         return ''
     contract = item.get('answer_contract') or {}
+    if contract.get('kind') == 'due_case_groups' and contract.get('version') == 1:
+        from datetime import date,timedelta
+        fields={'draft_due_date':'初稿期限／所限','client_review_due_date':'客户送审期限','filing_due_date':'向局提交期限'}
+        columns=item.get('columns') or [];rows=item.get('rows') or []
+        label=fields.get(contract.get('due_field'));proofs=contract.get('group_proofs') or {}
+        if not contract.get('complete_snapshot') or not label or label not in columns or not proofs:
+            raise ValueError('多期限分组缺少完整来源证明')
+        if set(proofs)-{'overdue','next14','unknown'}:raise ValueError('未知期限分组')
+        if '所编号' not in columns or len({r[columns.index('所编号')] for r in rows})!=len(rows):
+            raise ValueError('期限分组案号重复或缺失')
+        base=date.fromisoformat(contract['as_of']);groups={k:[] for k in proofs}
+        for row in rows:
+            value=row[columns.index(label)]
+            if value is None:status='unknown'
+            else:
+                day=date.fromisoformat(value)
+                status='overdue' if day<base else 'next14' if day<base+timedelta(days=14) else 'outside'
+            if status not in groups:raise ValueError('来源行超出声明的期限分组')
+            groups[status].append(row)
+        blocks=[]
+        for status in ('overdue','next14','unknown'):
+            if status not in groups:continue
+            proof=proofs[status]
+            if (proof.get('complete') is not True or type(proof.get('count')) is not int
+                    or proof['count']!=len(groups[status]) or proof.get('as_of')!=base.isoformat()
+                    or proof.get('due_field')!=contract['due_field']):
+                raise ValueError('期限分组计数、日期或字段与实际来源不一致')
+            child={**item,'rows':groups[status],'answer_contract':{**contract,'kind':'due_case_list',
+                   'due_status':status,'total':len(groups[status])}}
+            blocks.append(fact_block(child) or _empty_due_block(child))
+        return '\n\n'.join(blocks)
     if contract.get('kind') == 'due_case_list' and contract.get('version') == 1:
         columns=item.get('columns') or []
         rows=item.get('rows') or []
@@ -155,6 +192,13 @@ def fact_block(item):
                   '|' + '|'.join(cell(row[c['index']]) for c in cols) + f"|[{item['id']}]|"]
     lines += ['', '统计范围：' + contract['scope'], '在办口径：' + contract['active_definition'],
               '期限口径：' + contract['deadline_definition']]
+    if contract.get('owner_case_details'):
+        lines += ['', '| 承办人 | 在办案号 | 状态未知案号 | 来源 |', '| --- | --- | --- | --- |']
+        for proof in contract['owner_case_details']:
+            ids=proof.get('active_case_ids') or [];unknown=proof.get('unknown_stage_case_ids') or []
+            if type(proof.get('active_count')) is not int or len(set(ids))!=len(ids) or len(ids)!=proof['active_count']:
+                raise ValueError('负荷数量与案号明细不一致')
+            lines.append('| '+cell(proof['owner'])+' | '+cell('、'.join(ids) or '无')+' | '+cell('、'.join(unknown) or '无')+f" | [{item['id']}] |")
     if contract.get('excluded_case_ids'):
         lines += ['同案号重复记录已排除，未计为零负荷：'+'、'.join(contract['excluded_case_ids'])+'。']
     return '\n'.join(lines)
@@ -220,6 +264,63 @@ def workload_requested(query):
                 re.search(r'查|列|看看|统计|报告|代理师|同事|负责|承办人|人员', positive))
 
 
+def workload_summary_scope_issues(query, item, client_choices=()):
+    """Bind grouped counts, case identities and chart rows to one source scope.
+
+    Read only the persisted proof; never query new business data in a validator.
+    Legacy unscoped evidence remains readable, but cannot prove a named client.
+    """
+    contract=item.get('answer_contract') or {}
+    if contract.get('kind')!='workload_summary':return []
+    from casework.entities import normalize, aliases
+    from casework.routing import affirmative, dates
+    from casework import analytics
+    text=normalize(affirmative(query or ''))
+    filters=contract.get('filters') or {}
+    choices=contract.get('filter_choices') or {}
+    # A named client can also be observed in the source's own filters/details.
+    # This prevents a forged narrowed label from validating global source rows.
+    clients=set(choices.get('client',[])) | set(client_choices)
+    clients.update(c.get('client_alias') for c in contract.get('case_details',[]) if c.get('client_alias'))
+    if filters.get('client'):clients.add(filters['client'])
+    for field,values in [('client',clients),('owner',choices.get('owner',[])),('domain',choices.get('domain',[]))]:
+        mentioned=[v for v in values if any(a and not a.isdigit() and
+            re.search(re.escape(a)+r'(?![a-z0-9])',text) for a in aliases(v,field))]
+        if mentioned and (len(mentioned)!=1 or filters.get(field)!=mentioned[0]):
+            return ['图表统计范围不一致：原问题的'+field+'条件未绑定同一汇总；不得去掉条件改用全员数据。']
+    requested_dates=dates(query or '')
+    if len(requested_dates)==1 and contract.get('as_of')!=requested_dates[0]:
+        return ['图表统计基准日不一致：须使用原问题日期重新查询，不能只改标题。']
+    if 'case_details' not in contract:
+        if filters:return ['图表统计缺少同范围案号快照，不能核对分组与明细。']
+        return []
+    try:
+        base=analytics.as_date(contract['as_of']);cases=contract['case_details']
+        ids=[c['case_id'] for c in cases]
+        if len(ids)!=len(set(ids)):raise ValueError('重复案号')
+        expected={}
+        for case in cases:
+            for field,key in [('client','client_alias'),('owner','owner_name'),('domain','technical_domain'),('stage','stage')]:
+                if filters.get(field) and case.get(key)!=filters[field]:raise ValueError('来源明细超出筛选')
+            owner=case.get('owner_name') or '未登记承办人'
+            group=expected.setdefault(owner,{'owner':owner,'active_count':0,'unknown_stage_count':0,
+                'active_case_ids':[],'unknown_stage_case_ids':[]})
+            if analytics.active(case,base):
+                group['active_count']+=1;group['active_case_ids'].append(case['case_id'])
+            elif not analytics.is_completed(case,base) and case.get('stage') not in analytics.ACTIVE|analytics.INACTIVE:
+                group['unknown_stage_count']+=1;group['unknown_stage_case_ids'].append(case['case_id'])
+        ordered=sorted(expected.values(),key=lambda r:(-r['active_count'],r['owner']))
+        if contract.get('owner_case_details')!=ordered:raise ValueError('案号分组不一致')
+        if item.get('rows')!=[[r['owner'],r['active_count'],r['unknown_stage_count']] for r in ordered]:
+            raise ValueError('统计行不一致')
+        proof=contract['snapshot_proof']
+        if not proof.get('complete') or proof.get('unique_case_count')!=len(cases) or proof.get('observed_owner_count')!=len(ordered):
+            raise ValueError('快照不完整')
+    except (ValueError,TypeError,KeyError):
+        return ['图表统计与案号明细不一致：须从同一完整筛选快照重建汇总，不能只更改数值、筛选标签或图表。']
+    return []
+
+
 def workload_summary_date_issues(query, items):
     from casework import analytics
     from casework.routing import dates
@@ -281,7 +382,7 @@ def workload_delivery_issues(query, items):
     return []
 
 
-def render_answer(report, items, query=''):
+def render_answer(report, items, query='', *, quotes_only=False):
     """Fail closed on stale selectors; never guess a source or rewrite a claim."""
     items = bind_task_scope(query, items) if query else items
     lookup = {item.get('id'): item for item in items}
@@ -327,14 +428,21 @@ def render_answer(report, items, query=''):
         except ValueError:
             return match[0]
         if not body:
-            return match[0]
+            contract=item.get('answer_contract') or {}
+            if (contract.get('kind')=='due_case_list' and contract.get('version')==1
+                    and contract.get('complete_snapshot') and contract.get('total')==0):
+                body=_empty_due_block(item)
+            else:return match[0]
         audit.append({'kind': 'facts', 'evidence_id': item['id'], 'fingerprint': match[2]})
         return body
     # Do not expand a selector inside a JSON string into invalid JSON.
     try:
         json.loads(report.strip().removeprefix('```json').removesuffix('```'))
     except (ValueError, TypeError):
-        report = _FACTS.sub(facts, _SHORT_QUOTE.sub(short_quote, _QUOTE.sub(quote, report)))
+        report = _SHORT_QUOTE.sub(short_quote, _QUOTE.sub(quote, report))
+        if quotes_only:
+            return report, audit
+        report = _FACTS.sub(facts, report)
         for item in items:
             try:
                 block = fact_block(item)
@@ -363,19 +471,27 @@ def render_answer(report, items, query=''):
             if len(charts)==1 and charts[0]['chart']['type'] in ('bar','hbar'):
                 item=scanned[0];headers=item['columns'];rows=item['rows']
                 if all(name in headers for name in ('部件','编号','数量')):
-                    indices=[headers.index(name) for name in ('部件','编号','数量')]
+                    indices=[headers.index(name) for name in ('编号','部件','数量')]
                     source_ids=item['chart_source_ids']
                     location=re.search(r'\[第\s*\d+\s*页[^\n]*· 表格\]',
                                        str(next((e.get('snippet') for e in items if e.get('id')==item['id']),'') or ''))
                     where=location[0].strip('[]') if location else '原件表格区域'
-                    lines=[f"已核对附件“{item['title']}”的{where}。MinerU表格与原件视觉核对一致，数量没有待确认的模糊项。[{source_ids[0]}][{source_ids[1]}]",
-                           '', '| 部件 | 编号 | 数量 | 来源 |','| --- | --- | ---: | --- |']
+                    lines=[f"已核对附件“{item['title']}”的{where}。MinerU表格与原件视觉核对一致，已知数值与未知项分别列示。[{source_ids[0]}][{source_ids[1]}]",
+                           '', '| 编号 | 部件 | 数量 | 原表行位置 | 来源 |','| --- | --- | ---: | --- | --- |']
                     for row in rows:
                         vals=[str(row[i]).replace('|','&#124;') for i in indices]
-                        lines.append('| '+' | '.join(vals)+f" | [{source_ids[0]}][{source_ids[1]}] |")
+                        position=str(item.get('row_locations',{}).get(vals[0],'原件表格区域')).replace('|','&#124;')
+                        lines.append('| '+' | '.join(vals)+f" | {position} | [{source_ids[0]}][{source_ids[1]}] |")
                     total=sum(row[indices[2]] for row in rows)
-                    lines += ['',f"数量合计：{total}。"+''.join('['+sid+']' for sid in source_ids)]
-                    lines += ['','柱状图已在图表页生成；横轴为部件与编号，纵轴为数量，图中逐项数值与上表一致。']
+                    unknown = item.get('unknown_rows', [])
+                    for ident, part in unknown:
+                        position=str(item.get('row_locations',{}).get(ident,'原件表格区域')).replace('|','&#124;')
+                        lines.append(f"| {ident} | {part} | 未记录（不等于0） | {position} | [{source_ids[0]}][{source_ids[1]}] |")
+                    label = '已知数量小计' if unknown else '数量合计'
+                    lines += ['',f"{label}：{total}。"+''.join('['+sid+']' for sid in source_ids)]
+                    if unknown:
+                        lines.append('存在数量未记录的部件，全表总数未知；图表仅显示已知数值。')
+                    lines += ['','柱状图已在图表页生成；横轴为编号与部件，纵轴为数量，图中逐项数值与上表一致。']
                     report='\n'.join(lines)
                     audit.append({'kind':'confirmed_ocr_table_delivery','evidence_ids':source_ids,'rows':len(rows)})
         # A complete deadline query already contains the full source rows. Use
@@ -444,6 +560,9 @@ def render_answer(report, items, query=''):
         audit.append({'kind': 'duplicate_bound_quote', 'evidence_ids': list(dict.fromkeys(refs))})
         return match['quote'] + ''.join('[' + sid + ']' for sid in dict.fromkeys(refs))
     report = pattern.sub(collapse, report)
+    from tools.source_delivery import append_requested_provenance
+    report, location_audit = append_requested_provenance(query, report, items)
+    audit.extend(location_audit)
     return report, audit
 
 
@@ -772,3 +891,35 @@ def contract_issues(report, items):
             continue
         issues.append(f"事实块缺失或被改写：请原样使用{fact_token(item)}；须一起保留数值、日期、范围、未知和口径")
     return issues
+
+
+def workload_completion_issues(query, report, items):
+    """A requested candidate workload needs an actual bound delivery, not labels.
+
+    This bounded negative gate does not decide technical suitability. That
+    remains semantic review. Unknown counts may be disclosed, but do not prove a
+    completed workload delivery when the requested snapshot was not obtained.
+    """
+    from casework.routing import affirmative
+    text=affirmative(query or '')
+    if not re.search(r'在办量|人员负荷',text) or not re.search(r'参考|分案|推荐|办理人|负责人',text):
+        return []
+    summaries=[i for i in items if (i.get('answer_contract') or {}).get('kind') in ('workload_summary','workload')
+               and (i.get('answer_contract') or {}).get('owner_case_details')]
+    if not summaries:
+        return ['候选负荷要求未完成：缺少实际查询的同日期数量及案件集合；披露无法确认不等于已完成。']
+    errors=[]
+    for item in summaries:
+        errors.extend(workload_summary_scope_issues(query,item))
+        contract=item['answer_contract']
+        for owner in contract.get('owner_case_details',[]):
+            ids=owner.get('active_case_ids');count=owner.get('active_count')
+            if (type(count) is not int or not isinstance(ids,list) or len(ids)!=len(set(ids)) or count!=len(ids)):
+                errors.append('候选负荷数量与唯一案件集合不一致')
+        # fact_block carries count and all case identities from the exact source.
+        # Equivalent prose still needs a dedicated structured proof or review;
+        # it cannot silently bypass an unverified mandatory requirement.
+        block=fact_block(item)
+        if not block or block not in report:
+            errors.append('候选负荷交付缺少来源绑定的完整数量与案号表；使用工具返回的answer_token，不改变数值或集合。')
+    return list(dict.fromkeys(errors))

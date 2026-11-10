@@ -188,14 +188,32 @@ def meetings(*, client=None, ipr=None, case_key=None):
         info=document(file['id']);case=cases.get(file['root_id']+':'+str(file['case_id']))
         if not case:continue
         if client and case.get('client_alias')!=client:continue
-        for meeting in info['payload']['meetings']:
+        records=info['payload']['meetings']
+        if any(not m.get('field_locations') for m in records) and file['relative_path'].lower().endswith('.xlsx'):
+            # Read-only provenance repair for older snapshots. Reparse only
+            # hash-identical, allowlisted originals; never mutate old revisions.
+            try:
+                from pathlib import Path
+                import hashlib
+                root=store.get_root(file['root_id'])
+                path=store.approved_path(Path(root['path'])/file['relative_path'])
+                raw=path.read_bytes()
+                if hashlib.sha256(raw).hexdigest()==file['revision']:
+                    fresh=parser.parse(raw,file['relative_path'],root['mapping'])['meetings']
+                    def values(m):return {k:m.get(k) for k in parser.MEETING_FIELDS}
+                    records=[{**m,'field_locations':next((n.get('field_locations',{}) for n in fresh if values(n)==values(m)),{})} for m in records]
+            except (ValueError,OSError,KeyError):
+                pass # No verified cells available; retain an explicit gap.
+        for meeting in records:
             if ipr and ipr not in meeting['iprs']:continue
             # Duplicate copies shouldn't manufacture additional meetings.
-            key=store.digest({'case_key':case['case_key'],**{k:v for k,v in meeting.items() if k not in ('location','case_id')}})
-            proof={'file_id':file['id'],'revision':file['revision'],'parser_key':file['parser_key'],'path':file['relative_path'],'location':meeting['location']}
+            key=store.digest({'case_key':case['case_key'],**{k:v for k,v in meeting.items() if k not in ('location','case_id','field_locations')}})
+            proof={'file_id':file['id'],'revision':file['revision'],'parser_key':file['parser_key'],'path':file['relative_path'],
+                   'location':meeting['location'].split(' · 第')[0]+'（记录级；逐字段位置见field_locations）','field_locations':meeting.get('field_locations',{}),
+                   'location_scope':'record only; use field_locations for individual values'}
             if key in seen:
                 seen[key]['sources'].append(proof);continue
-            item={**meeting,'meeting_id':key,'case_key':case['case_key'],'case_id':case['case_id'],
+            item={**meeting,'location':proof['location'],'meeting_id':key,'case_key':case['case_key'],'case_id':case['case_id'],
                   'client':case.get('client_alias'),'title':case.get('title'),'sources':[proof]}
             seen[key]=item;result.append(item)
     return sorted(result,key=lambda x:(x.get('date') or '',x['case_id'],x['meeting_id']),reverse=True)

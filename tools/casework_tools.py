@@ -35,11 +35,16 @@ def _digest(value, operation):
             # One body excerpt per case; full sources remain available in the original.
             source=next((p for p in c['sources'] if p['kind'] in ('application','disclosure')),c['sources'][0] if c['sources'] else {})
             rows.append({'case_id':c['case_id'],'title':c['title'],'document_facts':c['document_facts'],
-                         'body':{k:source.get(k) for k in ('excerpt','evidence_id','file_id','location')},
+                         'body':{k:source.get(k) for k in ('excerpt','evidence_id','file_id','location','context_expansion')},
+                         'evidence_completeness':c.get('evidence_completeness'),
                          'related_drawings':c.get('related_drawings',[])})
-        facts={'cases':rows,'has_more':value['has_more'],'scope':value['meaning']}
+        facts={'cases':rows,'has_more':value['has_more'],'scope':value['meaning'],
+               'evidence_readback':value.get('evidence_readback')}
     elif operation=='monthly':
-        facts={'answer_markdown':value['answer_markdown'],'domain_rows':value['rows'],'coverage':value['coverage'],'date_completeness':value['date_completeness']}
+        facts={'answer_token':value.get('answer_token'),'domain_rows':value['rows'],
+               'source_evidence_ids':value.get('evidence_ids',[]),
+               'scope':{k:value.get(k) for k in ('start','end','client')},
+               'delivery':'使用本次answer_token交付完整已登记统计与未知清单；正文由程序按该标记绑定的来源渲染，不拼写新哈希。完整answer_markdown和逐项证明保留在原工具结果中，需额外细节时按ref回读。'}
     elif operation=='recommend':
         load_only=value.get('recommendation_mode')=='workload_only'
         has_history=value.get('recommendation_mode','technical')=='technical'
@@ -81,10 +86,10 @@ def _add(title,columns,rows,*,statistics=None,details=None,has_more=False,answer
 def _metric_contract(metric,index,time,dimensions,filters=None,unit='件'):
     labels={'received_count':('实际收案数量',['实际接收数量','新收案件数量','收案数量','实际收案']),
             'filed_count':('实际交局数量',['实际完成数量','交局数量','已核实实际交局数量','已核实交局数量','已核实实际交局','实际交局']),
-            'active_count':('在办案件数量',['在办案件数','在办案件','在办数量']),
+            'active_count':('在办案件数量',['在办案件数','在办案件','在办数量','登记在办量','在办量']),
             'near_count':('临近期限案件数量',['临近到期案件数量']),
             'overdue_count':('逾期案件数量',['逾期案件数'])}
-    labels.update({'history_match_count':('相关历史案件数量',['相关历史案件数']), 'unknown_stage_count':('状态未知案件数量',[])})
+    labels.update({'history_match_count':('相关历史案件数量',['相关历史案件数']), 'unknown_stage_count':('状态未知案件数量',['状态未知案件数'])})
     labels.update({'received_change_count':('实际收案数量变化',[]), 'filed_change_count':('实际交局数量变化',[])})
     labels.update({'received_change_pct':('实际收案数量变化百分比',['收案数量变化百分比','实际收案增减百分比','收案环比变化百分比']),
                    'filed_change_pct':('实际交局数量变化百分比',['交局数量变化百分比','实际交局增减百分比','交局环比变化百分比'])})
@@ -135,6 +140,22 @@ def _monthly_event_rows(report):
     return rows
 
 
+def _meeting_provenance(records):
+    rows=[]
+    labels={'date':'会议日期','agents':'参会代理师','pending':'待补材料','iprs':'参会IPR','content':'会议内容','changes':'修改意见'}
+    for record in records:
+        for source in record.get('sources',[]):
+            for field,label in labels.items():
+                where=source.get('field_locations',{}).get(field)
+                if not where:continue
+                value=record.get(field)
+                if isinstance(value,list):value='、'.join(value)
+                rows.append([record['case_id'],label,value,source['path'],where])
+    if not rows:return None
+    return _add('会议字段原件位置（字段分别绑定，不用记录级行号代替）',
+                ['所编号','字段','原件值','原件路径','原件位置'],rows)
+
+
 def _query_contract(params):
     """The open Agent uses the same action/slot contract as the fixed workflow."""
     from casework.entities import bind_filters
@@ -146,11 +167,16 @@ def _query_contract(params):
     if params.get('case_key') and operation not in ('meetings','recommend'):
         raise ValueError('case_key仅用于会议或分案；单案信息请用query保留案号')
     if operation=='workload_summary':
-        if set(active)-{'operation','as_of'}:raise ValueError('全员负荷只支持基准日，不得忽略其他筛选')
+        if set(active)-{'operation','as_of','client','owner','domain','stage'}:raise ValueError('案量分组仅支持基准日、客户、负责人、技术域与阶段，不得忽略其他筛选')
     elif operation=='workload':
         if set(active)-{'operation','owner','as_of'}:
             raise ValueError('人员负荷仅支持完整owner和as_of，不接受其他筛选或排序')
         if not params.get('owner'):raise ValueError('人员负荷必须提供完整owner')
+    elif operation=='meetings':
+        from casework.parser import CASE_RE
+        if params.get('query') and not CASE_RE.fullmatch(params['query'].strip()):
+            raise ValueError('会议query仅接受完整案号；客户或IPR请使用明确筛选参数')
+        DepartmentRequest(**{k:v for k,v in active.items() if k not in ('case_key','query')})
     elif operation=='topics':
         if set(active)-{'operation','start_month','end_month','client'}:
             raise ValueError('主题观察含未支持的筛选，不能忽略参数')
@@ -179,7 +205,7 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
     仅用户明确要求案件数量时include_count=true，返回可核验的同筛选计数表；否则total仅用于分页，不追加数量结论。
     实际收案日期未核实用missing_date_field=received_date；实际交局日期或依据未核实用actual_filed_date。
     missing_date_field覆盖全部办理阶段，不是计划期限due_status=unknown的在办筛选；两类条件不能替代。
-    workload_summary：全部承办人在办案量图表；一次完整快照分组并降序，实际交局排除、未知单列；不传owner，不逐人重复查询。
+    workload_summary：按承办人在办案量图表；传入用户要求的client、owner、domain、stage及as_of，在同一筛选快照中分组、降序并返回全部案号明细，实际交局排除、未知单列；不能去掉筛选换取全员结果。
     workload：用完整owner查询该代理师当前在办及三个期限负荷；不排序、不推荐，返回可直接引用的answer_markdown。
     summary：当前全量案件总数、在办、已核实实际交局与状态待核实数量，无分页且不接受额外过滤。
     同时查询临近与已过计划期限时due_statuses=["next14","overdue"]，不得只选其中一个；due_status与due_statuses互斥。
@@ -213,6 +239,11 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
             delivery={'version':1,'kind':'workload',**{k:result[k] for k in
                       ('as_of','scope','active_definition','deadline_definition')}}
             delivery['excluded_case_ids']=result['duplicate_case_ids_excluded']
+            delivery['complete_snapshot']=True
+            delivery['owner_case_details']=[{'owner':owner,'active_count':result['active_count'],
+                'unknown_stage_count':result['unknown_stage_count'],
+                'active_case_ids':[c['case_id'] for c in result['active_cases']],
+                'unknown_stage_case_ids':[c['case_id'] for c in result['unknown_stage_cases']]}]
             sid=_add('指定代理师基准日已知在办与期限负荷',columns,[[owner]+[result[k] for k in keys]],statistics=contract,
                      details={k:result[k] for k in ('owner','as_of','active_count','active_definition','deadline_definition','scope')},answer_contract=delivery)
             result['evidence_id']=sid
@@ -232,23 +263,29 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
             task=(run or {}).get('query','')
             date_issues=workload_summary_date_issues(task,[{'answer_contract':{'kind':'workload_summary','as_of':as_of or analytics.today().isoformat()}}])
             if date_issues:raise ValueError(date_issues[0])
-            result=analytics.workload_summary(as_of=as_of)
+            department_stage = stage
+            result=analytics.workload_summary(as_of=as_of,client=client,owner=owner,domain=domain,stage=department_stage)
             base=analytics.as_date(result['as_of'])
             time={'status':'bounded','field':'as_of','start':base.isoformat(),'end':(base+timedelta(days=1)).isoformat()}
-            contract={'version':1,'metrics':[_metric_contract(k,i+1,time,[]) for i,k in enumerate(('active_count','unknown_stage_count'))],
+            filters=[{'field':k,'value':v} for k,v in result['filters'].items()]
+            contract={'version':1,'metrics':[_metric_contract(k,i+1,time,[],filters) for i,k in enumerate(('active_count','unknown_stage_count'))],
                       'dimensions':[{'column':'owner_name','index':0,'label':'承办人','role':'dimension'}]}
             columns=['承办人']+[m['label'] for m in contract['metrics']]
             rows=[[r['owner'],r['active_count'],r['unknown_stage_count']] for r in result['owners']]
             delivery={'version':1,'kind':'workload_summary','as_of':result['as_of'],'scope':result['scope'],
                       'definition':result['active_definition'],'complete_snapshot':True,
                       'snapshot_proof':result['snapshot_proof'],
-                      'owner_case_details':result['owners']}
-            sid=_add('全体承办人在办与状态未知案量',columns,rows,statistics=contract,details=result['owners'],answer_contract=delivery)
+                      'owner_case_details':result['owners'],
+                      'filters':result['filters'],'filter_choices':result['filter_choices'],'case_details':result['case_details']}
+            from tools.answer_contracts import workload_summary_scope_issues
+            scope_issues=workload_summary_scope_issues(task,{'answer_contract':delivery,'rows':rows})
+            if scope_issues:raise ValueError(scope_issues[0])
+            sid=_add('筛选范围承办人在办与状态未知案量' if result['filters'] else '全体承办人在办与状态未知案量',columns,rows,statistics=contract,details=result['owners'],answer_contract=delivery)
             result['evidence_id']=sid
             from tools.answer_contracts import fact_block,fact_token
             item=next(e for e in evidence.snapshot(context.get_thread_id()) if e['id']==sid)
             result.update(answer_markdown=fact_block(item),answer_token=fact_token(item))
-            result['answer_guidance']='使用answer_token完整交付汇总表和全部承办人案号明细，不手抄或只列部分人；已含本次全员案量需要的明细和未知清单，无需重复取数。只在用户另外指定其他逐案字段时另查相应字段。正文仅补图表入口及非数字结论。'
+            result['answer_guidance']='使用answer_token完整交付汇总表和全部承办人案号明细，不手抄或只列部分人；已含本次筛选范围案量需要的明细和未知清单，无需重复取数。只在用户另外指定其他逐案字段时另查相应字段。正文仅补图表入口及非数字结论。'
             result['chart_ready']=bool(rows)
         elif operation=='summary':
             base=analytics.today();cases,duplicates=analytics.unique_cases(store.list_cases())
@@ -263,9 +300,13 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
             result['evidence_id']=_add('当前完整发布快照的案件计数',[m['label'] for m in contract['metrics']],
                                       [[result[k] for k in keys]],statistics=contract)
         elif operation=='cases':
+            # “在办” is a business scope over the department's typed stages,
+            # while attachment tables may legitimately contain a literal stage
+            # value. Keep this mapping local to the department catalog.
+            department_stage = stage
             reader=analytics.complete_cases_page if complete else analytics.cases_page
             paging={} if complete else {'offset':offset,'limit':limit}
-            result=reader(query=query,owner=owner,domain=domain,stage=stage,client=client,due_field=due_field,due_status=due_status,due_statuses=due_statuses,missing_date_field=missing_date_field,as_of=as_of,**paging)
+            result=reader(query=query,owner=owner,domain=domain,stage=department_stage,client=client,due_field=due_field,due_status=due_status,due_statuses=due_statuses,missing_date_field=missing_date_field,as_of=as_of,**paging)
             columns=['所编号','客户案号','发明名称','代理师','技术领域','案件状态','实际收案日期','初稿期限／所限','客户送审期限','向局提交期限','实际交局日期','交局已核实']
             keys=['case_id','client_case_id','title','owner_name','technical_domain','stage','received_date','draft_due_date','client_review_due_date','filing_due_date','actual_filed_date','filing_verified']
             # Client identity must also be present in the cited evidence, not
@@ -290,10 +331,12 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                      details=result['filters'],has_more=result['has_more'],answer_contract=due_contract)
             result['evidence_id']=sid
             if due_contract:
-                from tools.answer_contracts import fact_block
+                from tools.answer_contracts import fact_block,fact_token
                 bound=next((e for e in evidence.snapshot(context.get_thread_id())
                             if e.get('id')==sid and e.get('answer_contract')==due_contract),None)
-                if bound:result['answer_markdown']=fact_block(bound)
+                if bound:
+                    result['answer_markdown']=fact_block(bound)
+                    result['answer_token']=fact_token(bound)
             if include_count:
                 # The filtered total and how many of those cases are still in
                 # progress answer two different questions; both stay checkable.
@@ -307,7 +350,7 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                 result['count_evidence_id']=_add('同一筛选范围的案件总量',columns,values,details=result['filters'],
                 statistics={'version':1,'metrics':metrics,'dimensions':[]})
             if set(due_statuses or [due_status]) & {'overdue','next14'}:
-                missing=analytics.complete_cases_page(query=query,owner=owner,domain=domain,stage=stage,client=client,due_field=due_field,due_status='unknown',as_of=as_of)
+                missing=analytics.complete_cases_page(query=query,owner=owner,domain=domain,stage=department_stage,client=client,due_field=due_field,due_status='unknown',as_of=as_of)
                 result['unknown_due_cases']=[r for r in missing['rows'] if analytics.active(r,analytics.as_date(as_of))]
                 result['unknown_due_has_more']=missing['has_more']
                 unknown_contract=None
@@ -320,11 +363,13 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                 result['unknown_due_evidence_id']=_add('所选期限未知或冲突的已知在办案件',case_columns,[[r.get(k) for k in keys] for r in result['unknown_due_cases']],
                     details=missing['filters'],has_more=missing['has_more'],answer_contract=unknown_contract)
                 if unknown_contract:
-                    from tools.answer_contracts import fact_block
+                    from tools.answer_contracts import fact_block,fact_token
                     bound=next((e for e in evidence.snapshot(context.get_thread_id())
                                 if e.get('id')==result['unknown_due_evidence_id']
                                 and e.get('answer_contract')==unknown_contract),None)
-                    if bound:result['unknown_due_answer_markdown']=fact_block(bound)
+                    if bound:
+                        result['unknown_due_answer_markdown']=fact_block(bound)
+                        result['unknown_due_answer_token']=fact_token(bound)
             for row in result['rows']:
                 snapshot=store.get_case(row['case_key'])
                 row['field_states']={k:f['state'] for k,f in snapshot['fields'].items() if f['state'] in ('conflict','confirmation_stale')}
@@ -355,7 +400,8 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                 msid=_add('本案逐场会议与登记待补材料',
                     ['所编号','客户','会议日期','参会IPR','参会代理师','会议内容','待补材料','修改意见'],
                     [[r['case_id'],r['client'],r['date'],'、'.join(r['iprs']),'、'.join(r['agents']),r['content'],r['pending'],r['changes']] for r in meetings])
-                result['case_meetings']={'rows':meetings,'has_more':False,'evidence_id':msid}
+                result['case_meetings']={'rows':meetings,'has_more':False,'evidence_id':msid,
+                                         'field_provenance_evidence_id':_meeting_provenance(meetings)}
             result['note']='total用于分页；仅include_count=true时返回数量证据，未要求数量时不要额外附加计数。未知和冲突保持为空，case_key供后续定位。'
             if include_count:
                 scope='；'.join(str(v) for v in result['filters'].values() if v not in (None,'',[])) or '当前接入资料'
@@ -364,12 +410,27 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                 result['count_answer_markdown']='筛选范围：'+scope+'。\n| '+heads+' | 来源 |\n|'+' --- |'*(len(columns)+1)+'\n| '+cells+f" | [{result['count_evidence_id']}] |"
         elif operation=='meetings':
             if client and clients:raise ValueError('单客户和多客户筛选不能并存')
+            # A case number is a supported meeting anchor. Resolve it through
+            # the published catalog instead of silently ignoring query.
+            if query:
+                from casework import store as case_store
+                matches=[c for c in case_store.list_cases()
+                         if c.get('case_id','').upper()==query.strip().upper()]
+                if len(matches)==1:
+                    if case_key and case_key!=matches[0]['case_key']:
+                        raise ValueError('会议案号与case_key不一致')
+                    case_key=matches[0]['case_key']
+                elif len(matches)>1:
+                    raise ValueError('案号对应多个案件记录，不能静默选择会议来源')
+                else:
+                    return _json({'rows': [], 'has_more': False, 'query': query, 'note': '发布目录未找到此案号，未扩大查询范围'})
             records=catalog.meetings(client=client,ipr=ipr,case_key=case_key)
             if clients:records=[r for r in records if r['client'] in clients]
             rows=records[offset:offset+limit]
             sid=_add('实际登记的逐场三方会议',['所编号','客户','会议日期','参会IPR','参会代理师','会议内容','待补材料','修改意见'],
                      [[r['case_id'],r['client'],r['date'],'、'.join(r['iprs']),'、'.join(r['agents']),r['content'],r['pending'],r['changes']] for r in rows],has_more=len(records)>offset+limit)
-            result={'rows':rows,'has_more':len(records)>offset+limit,'evidence_id':sid,'coverage':store.coverage(),
+            result={'rows':rows,'has_more':len(records)>offset+limit,'evidence_id':sid,
+                    'field_provenance_evidence_id':_meeting_provenance(rows),'coverage':store.coverage(),
                     'note':'同案多场、同场多人分别保留；不能用立案联系人或当前承办人替代实际参会人。客户不同的同名IPR不能合并个人偏好。'}
         elif operation=='monthly':
             if not start_month or not end_month:raise ValueError('月报须提供明确的起止月份')
@@ -425,7 +486,13 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
             from api import storage
             run = storage.get_run(context.get_thread_id()) if context.get_thread_id() else None
             task = (run or {}).get('query', '')
-            if re.search(r'案号|明细|清单', task) and re.search(r'实际日期|对应.*日期|日期', task):
+            # “给明细” is itself a delivery requirement.  Requiring the
+            # query to also mention “日期” silently dropped received-case
+            # details for monthly count questions such as “给明细”.
+            # Emit the program-bound event table whenever the user asks for
+            # case-level detail/listing; the table carries the exact event
+            # date and source row, so the renderer remains source-bound.
+            if re.search(r'案号|明细|清单', task):
                 sid = result['case_event_details_evidence_id']
                 result['answer_markdown'] += '\n\n| 月份 | 事件指标 | 所编号 | 实际日期 | 来源 |\n| --- | --- | --- | --- | --- |'
                 for row in event_rows:
@@ -530,7 +597,8 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                           'filed_change_pct':change_pct(current['filed_count'],previous['filed_count'])}
                     time={'status':'bounded','start':analytics.month_bounds(previous['month'])[0].isoformat(),
                           'end':analytics.month_bounds(current['month'])[1].isoformat(),'field':'month_comparison'}
-                    metrics=[_metric_contract(m,i,time,[]) for i,m in enumerate(('received_change_count','filed_change_count'))]
+                    comparison_filters=[{'field':'client_alias','value':client}] if client else []
+                    metrics=[_metric_contract(m,i,time,[],comparison_filters) for i,m in enumerate(('received_change_count','filed_change_count'))]
                     item['evidence_id']=_add(current['month']+'相比'+previous['month']+'实际案量变化',
                         [m['label'] for m in metrics],[[item['received_change_count'],item['filed_change_count']]],
                         statistics={'version':1,'metrics':metrics,'dimensions':[]},
@@ -541,7 +609,7 @@ def query_department_cases(operation:Literal['cases','meetings','monthly','topic
                     pct_metrics=[]
                     for metric in ('received_change_pct','filed_change_pct'):
                         if item[metric] is None:continue
-                        pct_metrics.append(_metric_contract(metric,len(pct_row),time,[],unit='%'))
+                        pct_metrics.append(_metric_contract(metric,len(pct_row),time,[],comparison_filters,unit='%'))
                         pct_columns.append(pct_metrics[-1]['label']);pct_row.append(item[metric])
                     if pct_row:
                         item['pct_evidence_id']=_add(current['month']+'相比'+previous['month']+'实际案量变化百分比',
@@ -654,6 +722,9 @@ def _proof(proof,case):
         'source':proof.get('source',proof.get('path','')),'chunk_id':proof.get('chunk_id'),'revision':proof['revision'],
         'location':proof['location'],'snippet':proof.get('excerpt',''),'matched_terms':proof.get('matched_terms',[]),
         'casework':True,'file_id':proof['file_id'],'parser_key':proof['parser_key'],
+        'context_expansion':proof.get('context_expansion'), 'spans':proof.get('spans'),
+        'read_scope':proof.get('read_scope'),
+        'retrieved_excerpt':proof.get('retrieved_excerpt'), 'retrieved_location':proof.get('retrieved_location'),
         'case_id':case['case_id'],'owner_name':case.get('owner_name'),'current_snapshot':proof.get('current',True)})
 
 
@@ -713,8 +784,12 @@ def search_case_archive(query:str,limit:int=6,domain:str|None=None,owner:str|Non
             for fid,proof in technical_files.items():
                 item=catalog.document(fid,proof['revision'],proof['parser_key'])
                 chunks=item['payload']['chunks']
-                if chunks and not any(p['file_id']==fid and p['excerpt']==chunks[0]['text'] for p in case['sources']):
-                    case['sources'].append({**proof,'excerpt':chunks[0]['text'],'location':chunks[0]['location']})
+                if chunks and not any(p['file_id']==fid and chunks[0]['text'] in p['excerpt'] for p in case['sources']):
+                    leading={k:v for k,v in proof.items() if k not in (
+                        'context_expansion','retrieved_excerpt','retrieved_location','chunk_id','spans')}
+                    leading.update(excerpt=chunks[0]['text'],location=chunks[0]['location'],spans=chunks[0].get('spans',[]),
+                                   chunk_id=store.digest([fid,proof['revision'],proof['parser_key'],0]))
+                    case['sources'].append(leading)
             for proof in case['sources']:
                 proof['evidence_id']=_proof(proof,case)
                 proof.pop('score',None)
@@ -726,9 +801,14 @@ def search_case_archive(query:str,limit:int=6,domain:str|None=None,owner:str|Non
             accepted.append(case)
         result['has_more']=result['has_more'] or len(accepted)>limit
         result['results']=accepted[:limit]
+        # Open Agent callers share the deterministic critical-gap handoff.
+        from casework.archive_readback import complete
+        from casework.read_cache import invoke
+        complete(result, query, lambda args: invoke(read_case_archive_document, args))
         result['completion_filter']='按原件记载完成状态筛选当前检索候选，不代表全部历史案件已被穷尽' if completed_only else '未限制案件状态'
         result['answer_guidance']='document_facts来自已解析原文件字段，附原件定位及证据；可以在模拟资料范围引用，不要求正文署名。平台人工覆盖不在此返回。可见片段足以支持局部引用，无需逐份全文通读；未全读不能断言全文不存在。'
         result['answer_guidance']+=' 查询口径：'+query_scope+'；仅提及、方案中采用、核心主题须区分，召回数量不是符合口径的全库案件数。'
+        result['answer_guidance']+=' 片段可能按需补入相邻原文；context_expansion记录扩展方向、层数、覆盖缺口和停止原因，retrieved_excerpt保留原始命中。completeness仅为本地规则信号，不是语义核验；未出现条件或例外不能证明全文没有。未补全项及同版本回读参数见unresolved_sources和follow_up，仍有缺口时继续读取原文件或使用结构化读取。'
         if not result['results']:source_policy.record_gap('knowledge','已接入共享盘中未找到支持所问技术机制的材料',reason='no_hits')
         return _digest(result,'archive')
     except ValueError as exc:return '检索未完成：'+str(exc)
@@ -748,7 +828,9 @@ def read_case_archive_document(file_id:str,revision:str|None=None,parser_key:str
         case={'case_id':item['case_id'],'title':item['relative_path']}
         for chunk in selected:
             chunk['evidence_id']=_proof({'file_id':file_id,'revision':item['revision'],'parser_key':item['parser_key'],
-                         'path':item['relative_path'],'location':chunk['location'],'excerpt':chunk['text'],'current':item['current']},case)
+                         'path':item['relative_path'],'location':chunk['location'],'excerpt':chunk['text'],'current':item['current'],
+                         'read_scope':{'offset':offset,'returned':len(selected),'total_chunks':len(chunks),
+                                       'has_more':len(chunks)>offset+len(selected),'current':item['current']}},case)
         return _json({'file_id':file_id,'source':item['relative_path'],'revision':item['revision'],'parser_key':item['parser_key'],
                       'current':item['current'],'version_note':item['version_note'],'chunks':selected,
                       'warnings':item['payload'].get('warnings',[]),'version_status':item['version_status'],
@@ -756,3 +838,12 @@ def read_case_archive_document(file_id:str,revision:str|None=None,parser_key:str
                       'complete_published_text':offset==0 and len(selected)==len(chunks),
                       'scope':'只证明当前页解析文本已读，不证明扫描PDF、所有原件或整个共享盘均已覆盖'})
     except (KeyError,ValueError) as exc:return '原文读取未完成：'+str(exc)
+    except PermissionError:
+        source_policy.record_gap('knowledge','原文读取被来源权限拒绝',reason='source_denied')
+        return '禁止执行：原文读取被来源权限拒绝；证据不足，不能据此确认所问条件。'
+    except TimeoutError:
+        source_policy.record_gap('knowledge','原文读取超时，所问条件仍待核实',reason='tool_timeout')
+        return '原文读取超时：证据不足，不能据此确认所问条件。'
+    except (OSError,RuntimeError):
+        source_policy.record_gap('knowledge','原文结构或存储读取失败',reason='read_failed')
+        return '原文读取未完成：结构或存储读取失败；证据不足，不能据此确认所问条件。'

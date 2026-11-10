@@ -122,6 +122,9 @@ def search(query,*,limit=8,root_id=None,domain=None,owner=None,kind=None,allow_v
                 records=[{'text':r['text'],'metadata':{'source':r['relative_path'],'chunk_id':r['id'],'file_id':r['file_id'],
                           'revision':r['revision'],'parser_key':r['parser_key'],'root_id':r['root_id'],'case_id':r['case_id'],
                           'kind':r['kind'],'location':r['location'],'tags':json.loads(r['tags']),
+                          'ordinal':r['ordinal'],
+                          'document_format':payloads.get(r['file_id'],{}).get('format'),
+                          'spans':payloads.get(r['file_id'],{}).get('chunks',[{}]* (r['ordinal']+1))[r['ordinal']].get('spans',[]),
                           'case_focus':(payloads.get(r['file_id'],{}).get('retrieval_focus') or {}).get('text'),
                           'retrieval_role':payloads.get(r['file_id'],{}).get('chunks',[{}]* (r['ordinal']+1))[r['ordinal']].get('retrieval_role')},
                           'vector':json.loads(r['vector']) if r['vector'] else None,'embedding_key':r['embedding_key']} for r in rows]
@@ -294,7 +297,7 @@ def search(query,*,limit=8,root_id=None,domain=None,owner=None,kind=None,allow_v
         if query_tags and not exact_ids and not broad_scope and not tag_matches and record_id(hit) not in semantic_candidates:continue
         score=hit['score']+(.015*len(tag_matches)+(.004 if meta['kind'] in ('disclosure','application') else 0)
                             if _profile=='production' else 0)
-        proof={k:v for k,v in meta.items() if k not in ('root_id','case_id','case_focus','retrieval_role')}
+        proof={k:v for k,v in meta.items() if k not in ('root_id','case_id','case_focus','retrieval_role','ordinal','document_format')}
         proof.update(excerpt=hit['text'],channels=hit['channels'],matched_tags=sorted(tag_matches),
                      matched_terms=matched_terms(hit['text'], tag_matches),score=round(score,6))
         if 'rerank_logit' in hit:
@@ -313,6 +316,12 @@ def search(query,*,limit=8,root_id=None,domain=None,owner=None,kind=None,allow_v
             -body_priority(p['excerpt']) if exact_ids and _profile=='production' else 0, -p['score']))
         group['match_basis']=('candidate_body' if candidate_fallback else 'body') if group['sources'] else 'case_id_attachment'
         group['candidate_only']=candidate_fallback or not bool(exact_ids or group['matched_tags'])
+    context_expansion={'enabled':False,'scope':'消融路径保持原始检索片段'}
+    if _profile=='production':
+        from casework.retrieval_context import expand_results
+        tick=time.perf_counter()
+        context_expansion=expand_results(query,ranked[:limit],cached)
+        timings['context_expansion_seconds']=time.perf_counter()-tick
     timings['total_seconds']=time.perf_counter()-started
     from api.telemetry import record
     record({'event':'stage_timing','stage':'retrieval','timings':timings,'elapsed_seconds':timings['total_seconds']})
@@ -321,4 +330,5 @@ def search(query,*,limit=8,root_id=None,domain=None,owner=None,kind=None,allow_v
             'results':ranked[:limit],'matched_cases_in_retrieval_pool':len(ranked),
             'has_more':len(ranked)>limit,'strategy':mode,'note':note,'coverage':store.coverage(),
             'concept_expansion':expansion,'subject_check':subject_check,
-            'meaning':'排名分数不代表置信度、技术等同或撰写质量；正文依据来自当前发布的解析文本，关联绘图仅按所编号登记，不证明图形或连线关系。'}
+            'context_expansion':context_expansion,
+            'meaning':'排名分数不代表置信度、技术等同或撰写质量；正文依据来自当前发布的解析文本，关联绘图仅按所编号登记，不证明图形或连线关系。按需补读默认一层，仍有缺口时每个方向最多两层；受边界和预算限制，完整性仅为规则信号，不代表全文已读或全文不存在例外。'}

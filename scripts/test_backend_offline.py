@@ -14,6 +14,10 @@ def connect(sock,address):
     return original(sock,address)
 
 if __name__=='__main__':
+    sys.path.insert(0,str(root))
+    if not (root/'examples/department_shared_drive/source').exists():
+        from scripts.build_department_demo import build
+        build()
     socket.socket.connect=connect
     log=os.getenv('OFFLINE_NETWORK_AUDIT')
     if log:atexit.register(lambda:Path(log).write_text(json.dumps({'external_connections_blocked':blocked,'guard_enabled':True},ensure_ascii=False)))

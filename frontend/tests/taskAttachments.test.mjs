@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {stageAttachments,prepareTaskAttachments,comparisonQuery} from '../src/sessionFiles.js'
-import {QUICK_TEMPLATES,TASK_GROUPS,taskTemplates,featuredTemplates,groupedTemplates,attachmentRequirement,attachmentTaskContext} from '../src/taskTemplates.js'
+import {QUICK_TEMPLATES,MANUAL_WORKFLOWS,TASK_GROUPS,taskTemplates,featuredTemplates,groupedTemplates,attachmentRequirement,attachmentTaskContext} from '../src/taskTemplates.js'
 
 test('featured business entries keep their source permissions independently of menu ordering',()=>{
   const featured=featuredTemplates([...QUICK_TEMPLATES].reverse())
@@ -21,10 +21,10 @@ test('department catalog refreshes stale backend templates while custom catalogs
   assert.deepEqual(featuredTemplates(taskTemplates(custom),custom),custom.quick_templates)
 })
 
-test('business scenarios preserve attachment requirements, modes and source permissions',()=>{
+test('shared comparison utility preserves attachment validation for manually handled documents',()=>{
   assert.equal(new Set(QUICK_TEMPLATES.map(t=>t.id)).size,QUICK_TEMPLATES.length)
   for(const group of TASK_GROUPS) assert.ok(groupedTemplates(QUICK_TEMPLATES,group.id).length)
-  const doc=QUICK_TEMPLATES.find(t=>t.id==='document-comparison')
+  const doc={allowed_sources:[],attachments:{min:2,max:2,kind:'documents',hint:'请选择两份文档'}}
   assert.deepEqual(doc.allowed_sources,[])
   assert.ok(attachmentRequirement(doc,[]))
   assert.equal(attachmentRequirement(doc,[{name:'old.docx'},{name:'new.pdf'}]),'')
@@ -32,9 +32,10 @@ test('business scenarios preserve attachment requirements, modes and source perm
   assert.match(attachmentTaskContext(doc,[{name:'old.pdf'},{name:'new.pdf'}]),/基准文件："old.pdf"；对比文件："new.pdf"/)
 })
 
-test('business scenarios include source-isolated research, disclosure delivery and uploaded-table analysis',()=>{
+test('active scenarios retain disclosure delivery and table statistics while standalone web research is manual',()=>{
   const get=id=>QUICK_TEMPLATES.find(t=>t.id===id)
-  const web=get('public-reference')
+  assert.equal(get('public-reference'),undefined)
+  const web={allowed_sources:['web_search'],mode:'quick'}
   assert.deepEqual(web.allowed_sources,['web_search'])
   assert.equal(web.mode,'quick')
   const company=get('company-guidance')
@@ -105,4 +106,21 @@ test('existing-session comparison binds both chosen files without changing exter
   assert.match(comparisonQuery('old.csv','new.xlsx'),/不要生成文件/)
   assert.throws(()=>comparisonQuery('same.txt','same.txt'))
   assert.throws(()=>comparisonQuery('a.csv','b.pdf'))
+})
+
+
+test('retired standalone scenarios never return through cached or custom recommendations',()=>{
+  const retired=MANUAL_WORKFLOWS.map(item=>({id:item.template_id,label:item.label}))
+  assert.equal(QUICK_TEMPLATES.length,19)
+  assert.deepEqual(MANUAL_WORKFLOWS.map(item=>item.scenario_id),['S12','S14','S16'])
+  assert.ok(retired.every(item=>!QUICK_TEMPLATES.some(active=>active.id===item.id)))
+  const cached={quick_templates:[...retired,...QUICK_TEMPLATES],featured_template_ids:retired.map(item=>item.id)}
+  assert.deepEqual(taskTemplates(cached),QUICK_TEMPLATES)
+  assert.ok(featuredTemplates(cached.quick_templates,cached).every(item=>!retired.some(r=>r.id===item.id)))
+  const facts=QUICK_TEMPLATES.find(item=>item.id==='case-materials')
+  assert.equal(facts.label,'案件信息与会议待办')
+  assert.deepEqual(facts.allowed_sources,['db_query'])
+  assert.doesNotMatch(facts.value,/核心机制|技术机制|专业结论/)
+  assert.match(facts.value,/原件路径.*行列位置/)
+  assert.ok(QUICK_TEMPLATES.some(item=>item.id==='uploaded-table-analysis'))
 })

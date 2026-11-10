@@ -40,13 +40,16 @@ def _read_pdf(path: Path) -> str:
 def read_file_content(filename: str, instruction: str = "提取全部内容", sheet: str | None = None,
                       offset: int = 0, limit: int = 100, columns: list[str] | None = None,
                       filters: list[dict] | None = None, group_by: list[str] | None = None,
-                      aggregates: list[dict] | None = None, list_sheets: bool = False) -> str:
+                      aggregates: list[dict] | None = None, list_sheets: bool = False,
+                      deduplicate_by: list[str] | None = None) -> str:
     """只读会话附件或工作文件，返回证据及真实读取范围。
 
     CSV/Excel：先 list_sheets=true 查看工作表，再用 sheet 指定名称。offset 从 0 开始，
     limit 为 1～500；truncated=true 必须继续分页，不得把一页当全量。
     filters=[{"field":"金额","op":"gte","value":100}]，支持 eq/ne/contains/in/gt/gte/lt/lte/is_null/not_null。
     aggregates=[{"field":"金额","op":"sum","alias":"总金额"}] 可配 group_by；支持 sum/count/mean/min/max/nunique。
+    deduplicate_by=["案号"]先对完整表按主键去除完全相同记录，再筛选汇总；空键或同键冲突拒绝，不能任选。
+    count/nunique返回程序生成的完整唯一值集合、来源行及文件哈希证明，不由模型编造。
     instruction 仅记录用户目标，不执行自然语言条件；筛选、汇总必须传上述结构化参数。
     JSON默认返回验证后的原文；对象数组可用同样的filters/aggregates进行程序筛选与统计，sheet为JSON。
     扫描PDF与图片通过本机MinerU提取文字；部件连接、附图流程或图表含义用analyze_visual_document看图。
@@ -66,8 +69,8 @@ def read_file_content(filename: str, instruction: str = "提取全部内容", sh
     details = {}
     parsed = []
     try:
-        if ext in ('.csv', '.xlsx', '.xls') or (ext=='.json' and (filters or aggregates or columns or group_by or list_sheets)):
-            details = query_table(target, sheet, offset, limit, columns, filters, group_by, aggregates, list_sheets)
+        if ext in ('.csv', '.xlsx', '.xls') or (ext=='.json' and (filters or aggregates or columns or group_by or list_sheets or deduplicate_by)):
+            details = query_table(target, sheet, offset, limit, columns, filters, group_by, aggregates, list_sheets, deduplicate_by)
             content = json.dumps(details, ensure_ascii=False, default=str)
             if instruction != '提取全部内容':
                 content += '\n用户目标：' + instruction + '\n实际执行范围以上述结构化参数为准；如未满足目标，请继续调用工具。'
@@ -100,6 +103,11 @@ def read_file_content(filename: str, instruction: str = "提取全部内容", sh
             return f"不支持的文件类型：{ext}"
     except (ValueError, TypeError, OSError, KeyError) as exc:
         return f'文件读取失败：{exc}'
+    line_guide = ''
+    if ext in ('.md', '.txt'):
+        line_guide = '\n\n原文物理行定位（程序信息，包含标题和空行）：\n' + '\n'.join(
+            f'第{i}行：{line}' for i,line in enumerate(content.splitlines()[:400],1))
+        if len(content.splitlines())>400:line_guide+='\n行定位预览仅前400行，不能据此推断其余行；完整原文保留。'
     extra={}
     if details.get('aggregates') and all(a['op'] in ('count','nunique') for a in details['aggregates']):
         cols=details['columns'];groups=details.get('group_by') or []
@@ -119,9 +127,9 @@ def read_file_content(filename: str, instruction: str = "提取全部内容", sh
         **({'document_locations': [unit.metadata for unit in parsed],
             'extraction_method': 'mineru' if any(unit.metadata.get('parser') == 'mineru' for unit in parsed) else 'native_pdf',
             'scope': '文字与版面解析；图片结构和技术效果需另行视觉核对'} if parsed else {}),
-        **{key: details[key] for key in ('columns','rows','sheet','row_numbers','filters','aggregates','offset','limit','truncated','total_rows','matched_rows','result_rows','group_by','source_row_groups','quality') if key in details},
+        **{key: details[key] for key in ('columns','rows','sheet','row_numbers','filters','aggregates','offset','limit','truncated','total_rows','matched_rows','result_rows','group_by','source_row_groups','quality','deduplication','aggregation_proof') if key in details},
     })
-    return (f"[证据 {evidence_id}] 文件：{target.name}\n" if evidence_id else "") + content
+    return (f"[证据 {evidence_id}] 文件：{target.name}\n" if evidence_id else "") + content + line_guide
 
 
 if __name__ == "__main__":

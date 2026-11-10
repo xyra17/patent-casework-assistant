@@ -13,6 +13,12 @@ ROOT=Path(__file__).resolve().parents[1]
 TARGET='department_workbench'
 
 def activate():
+    pack=ROOT/'examples/department_shared_drive'
+    if not (pack/'source').exists() and not (pack/'expected.json').exists():
+        from scripts.build_department_demo import build
+        build()
+    elif not (pack/'source').exists() or not (pack/'expected.json').exists():
+        raise RuntimeError('模拟资料不完整；请先备份并重新生成，不自动覆盖已有资料')
     cfg=dotenv_values(ROOT/'.env')
     if cfg.get('MYSQL_HOST') not in ('localhost','127.0.0.1','::1'):raise RuntimeError('Only local development MySQL is supported')
     import mysql.connector
@@ -56,7 +62,7 @@ def activate():
         'KNOWLEDGE_BASE_DIR':str(knowledge),'VECTOR_STORE_DIR':str(runtime/'company-vector-store'),'APP_DB_PATH':str(runtime/'app.db'),
         'IMPORT_STORAGE_DIR':str(runtime/'imports'),'IMPORT_CONNECTIONS_FILE':'','CASEWORK_DB_PATH':str(runtime/'casework.db'),
         'CASEWORK_ALLOWED_ROOTS':json.dumps([str(source)],ensure_ascii=False),'CASEWORK_MYSQL_MIRROR':'1','CASEWORK_SYNC_INTERVAL':'300',
-        'CASEWORK_EMBEDDING':'1','DATA_MODE':'demo'})
+        'CASEWORK_EMBEDDING':cfg.get('CASEWORK_EMBEDDING','0'),'DATA_MODE':'demo'})
     for k,v in values.items():set_key(str(ROOT/'.env'),k,v)
     (ROOT/'.env').chmod(0o600);load_dotenv(ROOT/'.env',override=True)
     from casework import store,sync,analytics

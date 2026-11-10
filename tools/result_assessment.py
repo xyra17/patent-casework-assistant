@@ -44,6 +44,20 @@ def assess_result(run: dict) -> dict:
               '未找到与最终正文完全对应的分项审查；可能尚未审查或正文经兜底改写。')
     facts = _axis(checks, {'evidence_support', 'business_rules', 'consistency'},
                   'evidence_support', reason)
+    # Fixed workflows already seal program-verified claims to both the report
+    # and the complete evidence snapshot. They do not emit a model V2 check.
+    # Reuse that proof without overriding a failed semantic check or certifying
+    # a rewritten fallback. A bare business_check.status is never sufficient.
+    bound = review.get('business_check') or {}
+    if facts['status'] == 'unverified' and bound.get('status') == 'passed':
+        from casework.store import digest as evidence_digest
+        claims = bound.get('claims') or []
+        if (bound.get('report_sha256') == digest
+            and bound.get('evidence_sha256') == evidence_digest(run.get('evidence') or [])
+            and (bound.get('source_binding') or {}).get('status') == 'passed'
+            and not bound.get('issues') and claims and all(c.get('verified') is True for c in claims)):
+            facts.update(status='passed', basis='sealed_program_contract',
+                detail='程序已将客观声明、原件来源、完整证据快照及最终正文哈希绑定；不包含专业技术等价性确认。')
     completeness = _axis(checks, {'task_completion'}, 'task_completion',
                          '按用户要求逐项审查；与事实正确性分别记录。' if review else reason)
     status = run.get('status')
@@ -64,7 +78,9 @@ def assess_result(run: dict) -> dict:
     if status != 'completed' or not text:
         for axis in (facts, completeness):
             axis.update(status='unverified', checks=[], detail='最终交付尚未形成，未作分项结论。')
-    return {'schema_version': 1, 'report_sha256': digest,
+    from tools.product_boundary import assessment
+    product = assessment(run, review, facts, completeness, {'status':state})
+    return {'schema_version': 2, 'product_boundary':product, 'report_sha256': digest,
             'facts': facts, 'completeness': completeness,
             'delivery': {'status': state, 'label': label,
                          'stop_reason': summary.get('stop_reason') or run.get('stop_reason') or '',

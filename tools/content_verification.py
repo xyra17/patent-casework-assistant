@@ -51,20 +51,15 @@ def mechanism_adoption_issues(report, evidence, query):
 
 
 def archive_absence_issues(report, evidence):
-    """A local excerpt cannot establish absence throughout the source PDF."""
+    """Compatibility entry point; identity and absence use distinct contracts."""
+    from tools.citation_scope import case_ref_identity_issues
+    return case_ref_identity_issues(report,evidence)+source_absence_issues(report,evidence)
+
+
+def source_absence_issues(report,evidence):
+    """A local casework excerpt cannot establish whole-document absence."""
     if not any(e.get('casework') and e.get('type')=='knowledge' for e in evidence):return []
     issues=[]
-    by_id={item.get('id'):item for item in evidence}
-    for line in report.splitlines():
-        case_ids=set(re.findall(r'AI-\d{4}-\d{3}',line))
-        refs=re.findall(r'\[(S\d+)\]',line)
-        if len(case_ids)!=1 or not refs:continue
-        case_id=next(iter(case_ids))
-        bound=[by_id[ident] for ident in refs if ident in by_id]
-        if not any(item.get('case_id')==case_id or
-                   (item.get('type')=='database' and any(case_id in row for row in item.get('rows',[])))
-                   for item in bound):
-            issues.append('案件引用身份不匹配：'+case_id+'所在段落的证据未绑定该案；附件或其他案件原文不能证明本案机制。请回读该案来源或明确未核实。')
     for line in report.splitlines():
         line_refs = re.findall(r'\[S\d+\]', line)
         pieces = _source_sentences(line)

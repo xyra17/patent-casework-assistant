@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 
 from api import evidence
 
@@ -78,10 +80,41 @@ def build_fallback(
 ) -> str:
     """保留可查看的部分结果；内部纠错指令不进入业务答复。"""
     items = evidence.snapshot(thread_id) if thread_id else []
-    base = normalize_citations(clean_placeholders(best_report), items)
-    if citation_issues(base, items):
-        base = "部分内容的引用未通过核验，暂不展示。"
+    cleaned=clean_placeholders(best_report)
+    base = normalize_citations(cleaned, items)
+    from casework.archive_readback import final_check
+    context_check=final_check(query,items,base)
+    safety_note = ''
+    if context_check['issues']:
+        # Never retain an unsupported strong draft merely by appending a warning.
+        # The evidence section below still exposes acquired facts from all sources.
+        safety_note=('证据不足：尚未取得支撑所问条件或状态的直接依据，当前无法作出确定判断。'
+              if context_check['evidence_completeness']['status']=='unverified' else
+              '结论尚未核对通过，以下仅保留已取得的原文依据，暂不发布确定性判断。')
+        base=safety_note
+    citation_failures=citation_issues(base,items)
+    if issues or citation_failures:
+        from tools.verified_delivery import partial_delivery
+        candidate=base
+        base,audit=partial_delivery(candidate,items)
+        audit['citation_normalization_changed']=cleaned!=candidate
+        audit['cleaned_sha256']=hashlib.sha256(cleaned.encode()).hexdigest()
+        audit['citation_issues']=citation_failures
+        if thread_id:
+            from api import storage
+            # Candidate drafts and claim diagnostics are local artifacts, not
+            # source text in shared application logs or the delivered answer.
+            storage.save_context_artifact(thread_id,audit['candidate_sha256'],candidate)
+            payload=json.dumps(audit,ensure_ascii=False)
+            digest=hashlib.sha256(payload.encode()).hexdigest()
+            storage.save_context_artifact(thread_id,digest,payload)
+            storage.record_context_decision(thread_id,'delivery',{'event':'partial_delivery',
+                'artifact_ref':digest,'candidate_report_ref':audit['candidate_sha256'],
+                'published_claim_ids':audit['published_claim_ids'],
+                'citation_normalization_changed':cleaned!=candidate})
     parts: list[str] = []
+    if safety_note and safety_note not in base:
+        parts.append(safety_note + '\n\n')
     if base:
         parts.append(base)
     else:

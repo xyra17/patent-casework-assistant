@@ -52,6 +52,11 @@ def actual_date_unknown(case, field):
             or (field=='actual_filed_date' and not case.get('filing_verified')))
 
 
+def stage_matches(case, stage, base):
+    """Department semantic scope, never used for attachment literal filtering."""
+    return active(case, base) if stage == '在办' else not stage or case.get('stage') == stage
+
+
 @store.consistent_read
 def cases_page(*,query='',owner=None,domain=None,stage=None,client=None,due_field=None,due_status=None,due_statuses=None,missing_date_field=None,as_of=None,offset=0,limit=50):
     if not 0<=offset or not 1<=limit<=200:raise ValueError('分页参数无效')
@@ -70,7 +75,7 @@ def cases_page(*,query='',owner=None,domain=None,stage=None,client=None,due_fiel
         if owner and case.get('owner_name')!=owner:continue
         if domain and canonical_domain(case.get('technical_domain'))!=canonical_domain(domain):continue
         if client and case.get('client_alias')!=client:continue
-        if stage and case.get('stage')!=stage:continue
+        if not stage_matches(case,stage,base):continue
         if missing_date_field and not actual_date_unknown(case,missing_date_field):continue
         if statuses:
             if not due_field:raise ValueError('期限筛选必须指定日期字段')
@@ -222,10 +227,17 @@ def owner_workload(owner, *, as_of=None):
 
 
 @store.consistent_read
-def workload_summary(*, as_of=None):
-    """All observed owners, including zero active cases, from one snapshot."""
+def workload_summary(*, as_of=None, client=None, owner=None, domain=None, stage=None):
+    """Group the same filtered snapshot used for identities and active counts."""
     base=as_date(as_of)
     cases,duplicates=unique_cases(store.list_cases())
+    filter_choices={key:sorted({c[field] for c in cases if c.get(field)}) for key,field in
+                    [('client','client_alias'),('owner','owner_name'),('domain','technical_domain')]}
+    filters={key:value for key,value in dict(client=client,owner=owner,domain=domain,stage=stage).items() if value}
+    cases=[c for c in cases if (not client or c.get('client_alias')==client)
+           and (not owner or c.get('owner_name')==owner)
+           and (not domain or canonical_domain(c.get('technical_domain'))==canonical_domain(domain))
+           and stage_matches(c,stage,base)]
     groups={}
     for c in cases:
         owner=c.get('owner_name') or '未登记承办人'
@@ -235,12 +247,14 @@ def workload_summary(*, as_of=None):
             group['active_count']+=1;group['active_case_ids'].append(c['case_id'])
         elif not is_completed(c,base) and c.get('stage') not in ACTIVE|INACTIVE:
             group['unknown_stage_count']+=1;group['unknown_stage_case_ids'].append(c['case_id'])
+    scope='当前完整发布的案件信息'+('；筛选：'+ '、'.join(k+'='+v for k,v in filters.items()) if filters else '')+'，按承办人分组；同案号重复记录排除。登记负荷不代表可用工时。'
     return {'as_of':base.isoformat(),'owners':sorted(groups.values(),key=lambda r:(-r['active_count'],r['owner'])),
+            'filters':filters,'filter_choices':filter_choices,'case_details':[summary_case(c) for c in cases],
             'duplicate_case_ids_excluded':duplicates,'coverage':store.coverage(),
             'snapshot_proof':{'complete':True,'unique_case_count':len(cases),'observed_owner_count':len(groups),
                               'duplicate_case_ids_excluded':duplicates,
                               'scope':'对一致性读取的当前发布快照逐案分类，完整覆盖所有已登记承办人；不是分页预览。'},
-            'scope':'当前完整发布的案件信息，按承办人分组；同案号重复记录排除。登记负荷不代表可用工时。',
+            'scope':scope,
             'active_definition':'明确在办且未在基准日前核实实际交局；已完成、暂停、撤回、终止均不计入在办，状态未知单列。'}
 
 

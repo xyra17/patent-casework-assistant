@@ -13,7 +13,7 @@ from pathlib import Path
 from tools.document_parser import document_format, location_label, parse_document
 from casework.domains import canonical as canonical_domain
 
-VERSION = 'department-11'
+VERSION = 'department-12-meeting-field-locations'
 SUPPORTED = {'.xlsx','.xls','.csv','.doc','.docx','.pdf','.txt','.md','.json','.vsdx','.png','.jpg','.jpeg','.webp','.gif','.bmp','.tif','.tiff'}
 INVENTORY = {'.svg','.vsd','.dwg','.pptx','.zip'}
 FIELDS = {
@@ -193,7 +193,7 @@ def parse(raw: bytes, relative_path: str, mapping=None):
         if value is not None:
             claims.append({'field':field,'value':value,'location':location,'case_id':case_id})
 
-    def meeting(record,location,case_id=None):
+    def meeting(record,location,case_id=None,field_locations=None):
         if not any(record.get(field) for field in ('iprs','agents','content')):
             return
         item = {field:record.get(field) or '' for field in MEETING_FIELDS}
@@ -202,6 +202,8 @@ def parse(raw: bytes, relative_path: str, mapping=None):
         except ValueError:
             item['date'] = None;warnings.append({'location':location,'reason':'会议日期无法确认'})
         item.update(location=location,case_id=case_id)
+        if field_locations:
+            item['field_locations'] = dict(field_locations)
         meetings.append(item)
 
     def table(rows,location):
@@ -218,16 +220,16 @@ def parse(raw: bytes, relative_path: str, mapping=None):
             if row_case and path_case and row_case!=path_case:
                 raise ValueError('表内所编号与案件目录不一致，未跨案合并')
             event=any(meeting_lookup.get(normalize_label(row[0]))=='date' for _,row in form)
-            record={};record_at=location
+            record={};record_at=location;record_locations={}
             for i,row in form:
                 key=normalize_label(row[0]);at=f'{location} · 第{i}行 · 第2列'
                 if key in lookup:claim(lookup[key],row[1],at,row_case)
                 field=meeting_lookup.get(key)
                 if event and field:
                     if field=='date' and record:
-                        meeting(record,record_at,row_case);record={}
-                    record[field]=row[1];record_at=at
-            if record:meeting(record,record_at,row_case)
+                        meeting(record,record_at,row_case,record_locations);record={};record_locations={}
+                    record[field]=row[1];record_locations[field]=at
+            if record:meeting(record,record_at,row_case,record_locations)
             return
         scored=[]
         for index,row in enumerate(rows[:20]):
@@ -249,7 +251,8 @@ def parse(raw: bytes, relative_path: str, mapping=None):
             at = f'{location} · 第{offset}行'
             if event:
                 record={meeting_lookup[k]:v for k,v in zip(headers,row) if k in meeting_lookup}
-                meeting(record,at,row_case)
+                meeting(record,at,row_case,{meeting_lookup[k]:f'{at} · 第{column}列'
+                                          for column,k in enumerate(headers,1) if k in meeting_lookup})
             else:
                 for column,(k,value) in enumerate(zip(headers,row),1):
                     if k in lookup:claim(lookup[k],value,f'{at} · 第{column}列',row_case)

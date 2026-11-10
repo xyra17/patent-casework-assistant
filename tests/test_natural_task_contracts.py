@@ -70,7 +70,8 @@ class NaturalTaskContracts(unittest.TestCase):
                                   due_statuses=['overdue','next14'],as_of='2030-01-01'))
         self.assertEqual(result['business_delivery']['due_groups']['next14'],[])
         self.assertIn('## 未来两周计划到期',result['report'])
-        self.assertIn('当前接入的在办案件中，没有符合该项条件的案件',result['report'])
+        self.assertIn('本次完整筛选无符合记录；无案号和承办人可列',result['report'])
+        self.assertIn('共0件',result['report'])
 
     def test_month_comparison_is_computed_bound_and_required(self):
         request,result=self.execute(dict(operation='monthly',start_month='2026-09',end_month='2026-10',compare_months=True,

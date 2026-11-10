@@ -94,6 +94,7 @@
         </el-dropdown>
       </div>
       <span class="foot-hint">支持表格 / Word / PDF / 图片上传 · 文件按会话独立存储</span>
+      <span class="foot-hint" role="note">已转人工：{{ MANUAL_WORKFLOWS.map(item => item.label).join('、') }}</span>
     </div>
   </div>
 </template>
@@ -102,7 +103,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { Setting } from '@element-plus/icons-vue'
 import { store, toast } from '../store'
-import { TASK_GROUPS, taskTemplates, featuredTemplates, groupedTemplates, attachmentRequirement, attachmentTaskContext } from '../taskTemplates'
+import { TASK_GROUPS, MANUAL_WORKFLOWS, taskTemplates, featuredTemplates, groupedTemplates, attachmentRequirement, attachmentTaskContext } from '../taskTemplates'
 import { ATTACHMENT_ACCEPT, stageAttachments } from '../sessionFiles'
 import SourceSelector from './SourceSelector.vue'
 import {readSourcePreference, saveSourcePreference} from '../sourceSelection'
@@ -139,9 +140,8 @@ watch(allowedSources, values=>saveSourcePreference(localStorage,values), {deep:t
 watch(mode, (value) => {
   if (value === 'quick' || value === 'analysis') requirePdf.value = false
 })
-watch(query,value=>{
-  if (selectedTemplate.value && value!==selectedTemplate.value.value) selectedTemplate.value=null
-})
+// Editing the example keeps its business entry and attachment contract.
+// The backend checks facts and responsibilities independently of this hint.
 
 // 欢迎页示例可填入输入框。
 watch(
@@ -188,7 +188,8 @@ async function submit() {
   submitting.value = true
   try {
     const accepted = await props.submitTask(query.value.trim(), requirePdf.value, mode.value, maxRounds.value,
-      [...allowedSources.value], [...attachments.value], attachmentTaskContext(selectedTemplate.value,attachments.value))
+      [...allowedSources.value], [...attachments.value], attachmentTaskContext(selectedTemplate.value,attachments.value),
+      selectedTemplate.value ? {profile:selectedTemplate.value.id,ordered_files:attachments.value.map(f=>f.name)} : null)
     if (accepted) {
       allowedSources.value=allowedSources.value.filter(id=>id!=='web_search')
       query.value=''

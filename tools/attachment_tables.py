@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from decimal import Decimal, InvalidOperation
 from datetime import date, datetime
 from pathlib import Path
@@ -70,7 +71,7 @@ def load_table(path: Path, sheet=None, *, list_sheets=False):
 
 
 def query_table(path: Path, sheet=None, offset=0, limit=100, columns=None, filters=None,
-                group_by=None, aggregates=None, list_sheets=False) -> dict:
+                group_by=None, aggregates=None, list_sheets=False, deduplicate_by=None) -> dict:
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 500:
         raise ValueError('offset 必须为非负整数，limit 必须为 1～500')
     loaded = load_table(path, sheet, list_sheets=list_sheets)
@@ -89,6 +90,30 @@ def query_table(path: Path, sheet=None, offset=0, limit=100, columns=None, filte
     quality={'null_counts':{str(c):int(frame[c].isna().sum()) for c in frame.columns},
              'duplicate_row_numbers':[int(i)+2 for i in frame.index[frame.duplicated(keep=False)]]}
     fields = list(frame.columns)
+    # Key deduplication is explicit and precedes filtering. Contradictory rows
+    # cannot silently be selected by filter order or keep='first'.
+    row_lineage = {int(i): [int(i)+2] for i in frame.index}
+    deduplication = None
+    if deduplicate_by:
+        if (not isinstance(deduplicate_by, list) or not deduplicate_by
+            or len(set(deduplicate_by)) != len(deduplicate_by)
+            or any(c not in fields for c in deduplicate_by)):
+            raise ValueError('去重键必须是实际存在且不重复的字段')
+        if any(frame[c].isna().any() or frame[c].astype(str).str.strip().eq('').any() for c in deduplicate_by):
+            raise ValueError('去重键缺失，不能自动认定案件身份；请确认口径或补齐数据')
+        groups = frame.groupby(deduplicate_by, dropna=False, sort=False).indices
+        kept=[]; members=[]
+        for indices in groups.values():
+            subset=frame.iloc[indices]
+            if len(subset.drop_duplicates()) != 1:
+                raise ValueError('相同主键存在非完全相同的记录；须确认冲突处理口径，未任选一行')
+            first=int(subset.index[0]);kept.append(first)
+            row_lineage[first]=[int(i)+2 for i in subset.index]
+            members.append({'key': [str(subset.iloc[0][c]) for c in deduplicate_by],
+                            'source_rows': row_lineage[first]})
+        frame=frame.loc[kept]
+        deduplication={'keys':deduplicate_by,'input_rows':total,'unique_rows':len(frame),
+                       'policy':'identical_rows_only_before_filter','members':members}
     def validate(names):
         if any(name not in fields for name in names):
             raise ValueError(f'未知列，可选：{fields}')
@@ -112,6 +137,7 @@ def query_table(path: Path, sheet=None, offset=0, limit=100, columns=None, filte
     matched = len(frame)
     row_numbers = [int(n) + 2 for n in frame.index[offset:offset + limit]]
     lineage=[]
+    aggregation_proof=[]
     if aggregates:
         groups = group_by or []
         validate(groups)
@@ -127,12 +153,26 @@ def query_table(path: Path, sheet=None, offset=0, limit=100, columns=None, filte
             alias = item.get('alias') or f'{field}_{op}'
             if alias in named or alias in groups: raise ValueError('汇总结果列名重复')
             named[alias] = (field, op)
+        grouped_frames = list(frame.groupby(groups,dropna=False,sort=False)) if groups else [((),frame)]
+        for _, part in grouped_frames:
+            metrics=[]
+            for alias,(field,op) in named.items():
+                if op in ('count','nunique'):
+                    ids=list(dict.fromkeys(v.item() if hasattr(v, 'item') else v for v in part[field] if not pd.isna(v)))
+                    metrics.append({'column':alias,'field':field,'op':op,'unique_values':ids,
+                                    'non_null_count':int(part[field].count()),'null_count':int(part[field].isna().sum()),
+                                    'value':len(ids) if op=='nunique' else int(part[field].count())})
+                else:
+                    values=[None if pd.isna(v) else v.item() if hasattr(v,'item') else v for v in part[field]]
+                    metrics.append({'column':alias,'field':field,'op':op,'source_values':values})
+            aggregation_proof.append({'group':{c:None if pd.isna(part.iloc[0][c]) else str(part.iloc[0][c]) for c in groups},
+                'source_rows':[r for i in part.index for r in row_lineage[int(i)]], 'metrics':metrics})
         if groups:
             grouped=frame.groupby(groups,dropna=False,sort=False)
-            lineage=[[int(i)+2 for i in indices] for indices in grouped.groups.values()]
+            lineage=[[r for i in part.index for r in row_lineage[int(i)]] for _,part in grouped_frames]
             frame = frame.groupby(groups, dropna=False, sort=False).agg(**{alias: (field, (lambda series: series.sum()/series.count() if series.count() else None) if op == 'mean' else op) for alias,(field,op) in named.items()}).reset_index()
         else:
-            lineage=[[int(i)+2 for i in frame.index]]
+            lineage=[[r for i in frame.index for r in row_lineage[int(i)]]]
             frame = pd.DataFrame([{alias: (frame[field].sum() / frame[field].count() if op == 'mean' and frame[field].count() else None if op == 'mean' else getattr(frame[field], op)()) for alias, (field, op) in named.items()}])
         row_numbers = []
     elif group_by:
@@ -150,8 +190,20 @@ def query_table(path: Path, sheet=None, offset=0, limit=100, columns=None, filte
         if isinstance(value, int) and abs(value) > 9_007_199_254_740_991: return str(value)
         return value
     rows = [[cell(value) for value in row] for row in page.itertuples(index=False, name=None)]
+    for record,row in zip(aggregation_proof[offset:offset+limit],rows):
+        for metric in record['metrics']:
+            if metric['column'] in page.columns:
+                metric['value']=row[list(page.columns).index(metric['column'])]
+            if 'source_values' in metric:
+                metric['source_values']=[cell(v) for v in metric['source_values']]
+
     return {'sheets': sheets, 'sheet': selected, 'total_rows': total, 'matched_rows': matched,
             'result_rows': result_count, 'offset': offset, 'limit': limit, 'truncated': offset + len(page) < result_count,
             'row_numbers': row_numbers, 'source_row_groups':lineage[offset:offset+limit], 'quality':quality, 'columns': list(page.columns), 'rows': rows,
             'filters': filters or [], 'group_by': group_by or [], 'aggregates': aggregates or [],
+            'deduplication':deduplication,
+            'aggregation_proof':{'version':1,'file_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
+                'sheet':selected,'filters':filters or [],'deduplicate_by':deduplicate_by or [],
+                'groups':aggregation_proof[offset:offset+limit],
+                'complete':offset==0 and offset+len(page)==result_count},
             'note': 'row_numbers 为含表头的原始工作表行号；汇总结果不对应单行。'}

@@ -231,14 +231,14 @@ const reflection = computed(() => reflectionDetails(reflectionHistory.value[sele
 const isRunning = computed(() => props.session?.status === 'running' && !props.session?.preparing)
 const statusLabel = computed(() => props.session?.preparing ? (props.session.ruleReviewPending ? '待确认规则' : '正在核对规则') : ({
   running: '运行中',
-  completed: props.session?.degraded ? '未达标' : '已完成',
+  completed: ({VERIFIED:'已核验',REVIEW_REQUIRED:'待人工确认',INCOMPLETE:'未完成',BLOCKED:'已拦截'}[props.session?.result_assessment?.product_boundary?.status]) || (props.session?.degraded ? '未达标' : '执行结束'),
   failed: '失败',
   cancelled:'已取消',
   awaiting_input:'待你确认',
 }[props.session?.status] || '待开始'))
 const statusType = computed(() => ({
   running: 'primary',
-  completed: props.session?.degraded ? 'warning' : 'success',
+  completed: props.session?.result_assessment?.product_boundary?.status && props.session.result_assessment.product_boundary.status !== 'VERIFIED' ? 'warning' : props.session?.degraded ? 'warning' : 'success',
   failed: 'danger',
   cancelled:'info',
   awaiting_input:'warning',

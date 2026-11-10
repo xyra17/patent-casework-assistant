@@ -607,7 +607,9 @@ class RegressionTests(unittest.TestCase):
                     patch.object(main_agent, 'soft_review', AsyncMock(return_value='无法完整回答')):
                 text = await main_agent.run_deep_agent('q', 'last-round', 1)
             self.assertEqual(runner.await_count, 1)
-            self.assertIn('金额尚未核实', text)
+            from tools.result_assessment import report_hash
+            self.assertEqual(server.storage.load_context_artifact('last-round',report_hash('金额尚未核实')),'金额尚未核实')
+            self.assertIn('尚未核对通过',text)
             record=server.storage.get_run('last-round')
             gaps=[g for e in record['events'] if e['event']=='reflection' for g in e['data'].get('evidence_gaps',[])]
             self.assertTrue(any(g['missing']=='缺少实际金额' for g in gaps))
@@ -946,7 +948,10 @@ class RegressionTests(unittest.TestCase):
                     patch.object(main_agent, 'soft_review', AsyncMock(return_value='仍有缺口')):
                 text = await main_agent.run_deep_agent('普通问答', 'novel', 4)
             self.assertEqual(runner.await_count, 4)
-            self.assertTrue(text.startswith('最新结果'))
+            from tools.result_assessment import report_hash
+            self.assertEqual(server.storage.load_context_artifact('novel',report_hash('最新结果')),'最新结果')
+            self.assertFalse(text.startswith('最新结果'))
+            self.assertIn('未达标',text)
         asyncio.run(run())
 
     def test_unavailable_review_is_degraded_instead_of_passed(self):
@@ -979,11 +984,15 @@ class RegressionTests(unittest.TestCase):
         async def run():
             with patch.object(main_agent,'main_agent_run',AsyncMock(side_effect=drafts)),patch.object(main_agent,'soft_review',side_effect=review):
                 answer=await main_agent.run_deep_agent('普通问答','prefer-correction',3)
-            self.assertTrue(answer.startswith(drafts[1]['report']))
+            from tools.result_assessment import report_hash
+            self.assertEqual(storage.load_context_artifact('prefer-correction',report_hash(drafts[1]['report'])),drafts[1]['report'])
+            self.assertNotIn(drafts[0]['report'],answer)
+            self.assertFalse(answer.startswith(drafts[1]['report']))
             self.assertIn('未达标',answer)
         asyncio.run(run())
         summary=next(e['data'] for e in storage.get_run('prefer-correction')['events'] if e['event']=='quality_summary')
         self.assertFalse(summary['passed']);self.assertEqual(summary['stop_reason'],'review_unavailable')
+        self.assertEqual(summary['returned_round'],2)
 
     def test_auto_budget_stops_at_recommendation_and_persists_selection(self):
         from api import storage

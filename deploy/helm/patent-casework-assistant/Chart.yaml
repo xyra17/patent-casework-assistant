@@ -1,6 +1,0 @@
-apiVersion: v2
-name: patent-casework-assistant
-description: Patent Casework Assistant多智能体业务分析平台（单写者应用，生产需外置状态依赖）
-type: application
-version: 0.1.0
-appVersion: "1.0.0"

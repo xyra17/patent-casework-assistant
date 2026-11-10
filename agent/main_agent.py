@@ -460,12 +460,34 @@ def _extract_report(session_dir: Path, messages, before: dict | None = None) -> 
             except (OSError, UnicodeDecodeError):
                 continue
 
-    # 最后一条 AI 回复文本
+    # 最后一条 AI 回复文本。Responses API 的 LangChain 适配器可能把正文
+    # 表示成 content block 列表；只接受 str 会把已生成答案静默变成空串。
     for msg in reversed(messages):
         content = getattr(msg, "content", None)
-        if isinstance(msg, AIMessage) and isinstance(content, str) and content.strip():
-            return content
+        if isinstance(msg, AIMessage):
+            text = _text_content(content)
+            if text:
+                return text
     return ""
+
+
+def _text_content(content) -> str:
+    """Join explicit text blocks without treating tool data as report text."""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, (list, tuple)):
+        return ""
+    parts = []
+    for block in content:
+        if isinstance(block, dict):
+            kind, value = block.get("type"), block.get("text")
+        else:
+            kind, value = getattr(block, "type", None), getattr(block, "text", None)
+        if isinstance(value, dict):
+            value = value.get("value")
+        if kind in ("text", "output_text", "input_text") and isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    return "\n".join(parts)
 
 
 def _prepare_session(thread_id: str, session_dir: Path) -> None:
@@ -547,7 +569,7 @@ async def main_agent_run(
     repair_message = next((m for m in (revision_context or [])
                            if m.additional_kwargs.get('context_role') == 'revision_patch_plan'), None)
     if repair_message is not None:
-        from tools.answer_repair import repair_answer
+        from tools.answer_repair import repair_answer, patch_failure_audit
         data = json.loads(repair_message.content)
         items = evidence.snapshot(context.get_thread_id())
         previous = next(m.content for m in revision_context
@@ -556,11 +578,12 @@ async def main_agent_run(
             report = await repair_answer(previous, data, items, original_query or query, get_llm)
             audit = {'mode':'located_patch','units':data['units'],'preserved_other_text':True}
         except Exception as exc:
-            logger.warning('局部修订未完成：%s',type(exc).__name__)
+            audit = patch_failure_audit(exc,previous,data)
+            logger.warning('局部修订未完成 code=%s type=%s stage=%s reason=%s',
+                           audit['code'],audit['exception_type'],audit['stage'],audit['reason'])
             # Keep the real draft and its failures; do not regenerate unrelated
             # paragraphs when a patch is malformed or the provider is unavailable.
             report = previous
-            audit = {'mode':'located_patch','status':'rejected','reason':type(exc).__name__}
         return {'report':report,'evidence':items,'called_sources':[],
                 'required_sources':list(required_sources or []),'require_pdf':False,
                 'pdf_produced':False,'repair_audit':audit,'report_files':data.get('report_files',{})}
@@ -1044,7 +1067,9 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         and bool(re.search(r'对比|比较|区别|差异|差在哪|不同|现有|已有', original_query)))
     routing_attempts = 0
     plan_revision = 0
-    planned_query = original_query + "\n\n" + format_plan_prompt(plan) + "\n" + rule_engine.prompt() + "\n" + task_sources.prompt()
+    from tools import product_boundary
+    await product_boundary.prepare_objective(thread_id)
+    planned_query = original_query + "\n\n" + format_plan_prompt(plan) + "\n" + rule_engine.prompt() + "\n" + task_sources.prompt() + product_boundary.prompt()
     logger.info(
         "任务开始 thread_id=%s task_type=%s require_report=%s require_pdf=%s sources=%s",
         thread_id, plan.task_type, require_report, require_pdf, plan.required_sources,
@@ -1153,6 +1178,24 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
             })
             raise clarification.ClarificationRequired(question,result['report'],result['evidence'])
 
+        # A scanned table cannot become a chart from OCR text alone. When a
+        # chart is explicitly requested and the agent read an image without a
+        # visual witness, perform one bounded visual verification automatically
+        # before building the final chart delivery. This keeps unknown cells
+        # unknown and lets the shared chart builder bind values to both sources.
+        from tools.chart_utils import task_needs_charts
+        if task_needs_charts(original_query):
+            image_items = [item for item in result.get('evidence', [])
+                           if item.get('type') == 'file'
+                           and item.get('extraction_method') == 'mineru'
+                           and not item.get('visual_observation')
+                           and str(item.get('title','')).lower().endswith(('.png','.jpg','.jpeg','.webp','.bmp','.tif','.tiff'))]
+            if image_items and not any(item.get('visual_observation') for item in result.get('evidence', [])):
+                from tools.visual_document_tool import analyze_visual_document
+                await analyze_visual_document.ainvoke({'instruction': original_query,
+                                                       'filename': image_items[0].get('title','')})
+                result['evidence'] = evidence.snapshot(thread_id)
+
         gaps = source_policy.gaps_for_round()
         for gap in gaps:
             await monitor.report(thread_id, 'source_gap', '已记录证据缺口', gap)
@@ -1185,7 +1228,7 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
                 previous_signature = None
                 unchanged_rounds = 0
                 source_policy.configure(plan.required_sources, forbidden_sources)
-                planned_query = original_query + "\n\n" + format_plan_prompt(plan) + "\n" + rule_engine.prompt()
+                planned_query = original_query + "\n\n" + format_plan_prompt(plan) + "\n" + rule_engine.prompt() + product_boundary.prompt()
                 # 旧候选没有满足新增来源，不再与更新后计划的候选直接比较。
                 best_result = best_score = None
                 best_issues = []
@@ -1216,6 +1259,15 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         from tools.answer_contracts import render_answer, bind_task_scope
         result['evidence'] = bind_task_scope(original_query, result.get('evidence', []))
         from tools.evidence_refs import normalize_citations
+        from tools import product_boundary
+        draft = result['report']
+        rendered, publication_audit, publication_issue = product_boundary.render_statistics(draft, result.get('evidence', []), original_query)
+        if publication_audit:
+            storage.save_context_artifact(thread_id, hashlib.sha256(draft.encode()).hexdigest(), draft)
+            result['report'] = rendered
+            result['program_publication_audit'] = publication_audit
+        if publication_issue:
+            result['execution_issue'] = publication_issue
         raw_report = result['report']
         from casework import store as sealed_store
         bound=result.get('business_check') or {}
@@ -1245,6 +1297,7 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
             from tools.answer_repair import remove_repeated_paragraphs
             result['report']=remove_repeated_paragraphs(result['report'])
             result['report'], result['answer_render_audit'] = render_answer(result['report'], result.get('evidence', []), result.get('query',''))
+        result['report'] = product_boundary.publication_notice(result['report'])
         if not require_pdf:
             try:
                 _sync_report_files(result,session_dir)
@@ -1310,11 +1363,14 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
             "candidate_report_ref":result.get("candidate_report_ref"),
             "statistics_check": result.get("statistics_check"),
             "business_check": result.get("business_check"),
+            "archive_evidence_check": result.get("archive_evidence_check"),
+            "evidence_readback": result.get("evidence_readback"),
             "business_delivery": result.get("business_delivery"),
             "review_format_errors": result.get("review_format_errors", []),
             "review_rechecks": result.get('review_rechecks', []),
             "answer_render_audit": result.get('answer_render_audit', []),
             "repair_audit": result.get('repair_audit'),
+            "program_publication_audit": result.get("program_publication_audit"),
             "semantic_rubric": result.get("semantic_rubric"),
             "semantic_adjudication": result.get("semantic_adjudication"),
             "execution_contract": result.get("execution_contract"),

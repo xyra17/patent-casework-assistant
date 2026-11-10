@@ -26,7 +26,10 @@ def test_vertical_meeting_retains_content_and_location():
     assert meeting['agents']==['甲','乙']
     assert meeting['date']=='2026-10-03'
     assert meeting['pending']=='补充索引负例'
-    assert '第' in meeting['location']
+    assert meeting['location']=='CSV'
+    assert meeting['field_locations']['date']=='CSV · 第3行 · 第2列'
+    assert meeting['field_locations']['agents']=='CSV · 第4行 · 第2列'
+    assert meeting['field_locations']['pending']=='CSV · 第6行 · 第2列'
 
 def test_vertical_form_rejects_cross_case_identity():
     raw='字段,内容\n所编号,AI-2026-002\n收案日期,2026-10-01\n'.encode()

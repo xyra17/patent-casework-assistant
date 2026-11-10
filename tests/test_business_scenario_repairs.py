@@ -18,11 +18,13 @@ class BusinessScenarioRepairs(TestCase):
         from tools.content_verification import archive_absence_issues
         evidence=[{'id':'S1','type':'file','snippet':'新交底机制'},
                   {'id':'S2','type':'knowledge','casework':True,'case_id':'AI-2026-004'},
-                  {'id':'S3','type':'database','rows':[['AI-2026-005','乙']]}]
+                  {'id':'S3','type':'database','columns':['所编号','代理师'],'rows':[['AI-2026-005','乙']]}]
         bad='| AI-2026-005 | 机制 [S1][S2] |'
         self.assertTrue(any(x.startswith('案件引用身份不匹配') for x in archive_absence_issues(bad,evidence)))
         self.assertFalse(archive_absence_issues('| AI-2026-004 | 原文 [S2] |',evidence))
         self.assertFalse(archive_absence_issues('| AI-2026-005 | 乙 [S3] |',evidence))
+        untyped=[{k:v for k,v in e.items() if k!='columns'} for e in evidence]
+        self.assertTrue(archive_absence_issues('| AI-2026-005 | 乙 [S3] |',untyped))
 
     def test_quote_selector_preserves_pdf_wrapped_mechanism(self):
         source={'id':'S1','type':'knowledge','snippet':'摘要\n输入为文档身份。处理链为确认范围；冻结可见性；删除向量与词法\n块；回查所有入口。'}

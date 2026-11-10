@@ -11,8 +11,12 @@ def date_completeness_issues(report, evidence):
     if not any(e.get('date_completeness') for e in evidence):
         # Legacy date-conflict evidence must not justify a missing-date claim.
         if not any(e.get('casework') and '日期' in e.get('title','') for e in evidence):return []
+    definitions={str((e.get('answer_contract') or {}).get(k,'')) for e in evidence
+                 for k in ('active_definition','definition','deadline_definition')} - {''}
     issues=[]
     for line in report.replace('**','').splitlines():
+        if line.strip() in definitions or re.sub(r'^(?:在办口径|期限口径)[：:]\s*','',line.strip()) in definitions:
+            continue # Exact source-owned definition, not a claim about observed missing dates.
         line_refs=re.findall(r'[\[〔](S\d+)[\]〕]',line)
         for sentence in re.split(r'[。；](?!\s*[\[〔])',line):
             sentence_refs=re.findall(r'[\[〔](S\d+)[\]〕]',sentence)

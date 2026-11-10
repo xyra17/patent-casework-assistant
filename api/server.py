@@ -129,6 +129,9 @@ class RuleSkip(BaseModel):
     revision: int = Field(gt=0,strict=True)
 
 
+from tools.product_boundary import ProductContext
+
+
 class TaskRequest(BaseModel):
     query: str = Field(min_length=1)
     task_query: str | None = None
@@ -141,6 +144,7 @@ class TaskRequest(BaseModel):
     allowed_sources: list[Literal['db_query', 'knowledge', 'web_search']] = Field(
         default_factory=lambda: list(task_sources.DEFAULT_SOURCES), max_length=3)
     clarification_answer: clarification.ClarificationAnswer | None = None
+    product_context: ProductContext | None = None
 
 
 @app.get("/api/health")
@@ -248,7 +252,9 @@ async def _finish_interrupted_review(thread_id: str, reason: str, max_rounds: in
 
 async def _run_task(thread_id: str, query: str, max_rounds: int = 3) -> None:
     run = storage.get_run(thread_id) or {}
-    with task_sources.scope(run.get('allowed_sources')), clarification.scope(run.get('clarification_response')):
+    from tools import product_boundary
+    product = next((e.get('data') for e in reversed(run.get('events') or []) if e.get('event') == 'product_boundary_request'), None)
+    with task_sources.scope(run.get('allowed_sources')), clarification.scope(run.get('clarification_response')), product_boundary.scope(product):
         await _execute_task(thread_id, query, max_rounds)
 
 
@@ -297,7 +303,7 @@ async def _execute_task(thread_id: str, query: str, max_rounds: int = 3) -> None
             business_review=business_review_from_run(storage.get_run(thread_id) or {}))
         from tools.result_assessment import assess_result
         result_assessment = assess_result({**(storage.get_run(thread_id) or {}),
-            'status': 'completed', 'result': result, 'degraded': degraded})
+            'status': 'completed', 'result': result, 'degraded': degraded, 'evidence': evidence_items, 'charts': build_chart_items(evidence_items, query)})
         await monitor.report(
             thread_id,
             "task_result",
@@ -345,6 +351,14 @@ async def _execute_task(thread_id: str, query: str, max_rounds: int = 3) -> None
 @app.post("/api/task")
 async def submit_task(body: TaskRequest) -> dict:
     """提交任务：创建会话目录、上报 session_created，异步执行并立即返回 thread_id。"""
+    if body.product_context:
+        catalog = json.loads((path_utils.RESOURCE_ROOT / 'config/session-examples.json').read_text(encoding='utf-8'))
+        manual = next((item for item in catalog.get('manual_workflows', [])
+                       if item['template_id'] == body.product_context.profile), None)
+        if manual:
+            raise HTTPException(410, {'code': 'manual_workflow',
+                'message': manual['label'] + '已移出自动业务范围，请人工处理。',
+                'scenario_id': manual['scenario_id'], 'manual_steps': manual['manual_steps']})
     from casework.privacy import ensure_model_allowed
     try:ensure_model_allowed()
     except PermissionError as exc:raise HTTPException(403,str(exc)) from exc
@@ -394,6 +408,10 @@ async def submit_task(body: TaskRequest) -> dict:
         await monitor.report(
             thread_id, "session_created", "会话工作目录已创建", {"path": str(session_dir)}
         )
+        if body.product_context:
+            from tools.product_boundary import request_contract
+            await monitor.report(thread_id, 'product_boundary_request', '已绑定本次产品职责契约',
+                request_contract(prepared['execution_query'], body.product_context))
         if rule_context.get('candidate_count'):
             await monitor.report(thread_id,'rules_context','已核对本次长期规则',rule_context)
         task = asyncio.create_task(_run_task(thread_id, prepared['execution_query'], body.max_rounds))

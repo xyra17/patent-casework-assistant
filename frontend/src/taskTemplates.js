@@ -2,6 +2,13 @@ import catalog from '../../config/session-examples.json' with { type: 'json' }
 
 export const TASK_GROUPS = catalog.groups
 export const QUICK_TEMPLATES = catalog.templates
+export const MANUAL_WORKFLOWS = catalog.manual_workflows || []
+const manualIds = new Set(MANUAL_WORKFLOWS.map(item => item.template_id))
+
+function activeTemplates(items) {
+  const active = items.filter(item => !manualIds.has(item.id))
+  return active.length === items.length ? items : active
+}
 
 export function homeTemplates(templates) {
   const ids = ['similar-case', 'case-materials', 'meeting-history',
@@ -15,10 +22,11 @@ export function taskTemplates(experience = {}) {
   // when an already-running backend still holds an older catalog snapshot.
   if (experience.task_examples_catalog === 'department') return QUICK_TEMPLATES
   const configured = experience.quick_templates
-  return configured?.length ? configured : QUICK_TEMPLATES
+  return configured?.length ? activeTemplates(configured) : QUICK_TEMPLATES
 }
 
 export function featuredTemplates(templates, experience = {}) {
+  templates = activeTemplates(templates)
   const ids = experience.featured_template_ids || catalog.featured_template_ids
   const selected = ids.map(id => templates.find(item => item.id === id)).filter(Boolean)
   return [...selected, ...templates.filter(item => !selected.includes(item))].slice(0, 3)
