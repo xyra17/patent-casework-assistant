@@ -23,6 +23,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
           pip install -e . pytest
+      - name: Prepare tokenizer data
+        run: python -c 'import tiktoken; tiktoken.get_encoding("cl100k_base")'
       - name: Unit and feature tests
         run: python scripts/test_backend_offline.py discover -s tests -v
       - name: Pytest scenarios

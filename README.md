@@ -25,6 +25,8 @@ uv sync --locked
 cp .env.example .env
 npm --prefix frontend ci
 npm --prefix frontend run build
+# 首次准备上下文计量词表（静态资源，无模型调用）
+.venv/bin/python -c 'import tiktoken; tiktoken.get_encoding("cl100k_base")'
 ```
 
 编辑`.env`，填写`DEEPSEEK_API_KEY`、`MYSQL_PASSWORD`及`MYSQL_DEV_ROOT_PASSWORD`。默认配置使用DeepSeek官方OpenAI兼容端点；真实Agent任务需要有效模型凭据和额度。可改为获准的本地或内网端点。
@@ -57,7 +59,7 @@ Word、Excel、CSV和文字PDF使用本地解析；扫描件、图像与视觉�
 
 ## 离线测试
 
-不需要模型API、不调用付费服务。数据不存在时测试入口会生成独立模拟资料：
+不需要模型API、不调用付费服务。首次运行前按上面的步骤缓存Tokenizer词表；测试期间禁止外部网络连接。数据不存在时测试入口会生成独立模拟资料：
 
 ```bash
 uv sync --locked
