@@ -14,6 +14,7 @@ router=APIRouter(prefix='/api/long-term-rules',tags=['long-term-rules'])
 class CreateRule(RuleInput):
     source_thread_id: str | None = Field(default=None,max_length=128)
     source_revision_id: int | None = Field(default=None,gt=0,strict=True)
+    source_turn_id: str | None = Field(default=None,max_length=128)
     confirmed: bool = Field(default=False,strict=True)
 
 class UpdateRule(RuleInput):
@@ -22,7 +23,8 @@ class UpdateRule(RuleInput):
 
 class DraftRequest(BaseModel):
     thread_id: str = Field(min_length=1,max_length=128)
-    revision_id: int = Field(gt=0,strict=True)
+    revision_id: int | None = Field(default=None,gt=0,strict=True)
+    turn_id: str | None = Field(default=None,max_length=128)
 
 
 def validate_rule(body):
@@ -59,7 +61,14 @@ def catalog():
 @router.post('/draft')
 async def draft_rule(body: DraftRequest):
     run=storage.get_run(body.thread_id)
+    if not run: raise HTTPException(404,'来源会话不存在')
+    if bool(body.turn_id) == bool(body.revision_id): raise HTTPException(422,'请选择一个来源轮次或修订')
     revision=next((r for r in (run or {}).get('intent_revisions',[]) if r['id']==body.revision_id),None)
+    if body.turn_id:
+        from api.conversation import get_turn
+        turn=get_turn(body.thread_id,body.turn_id)
+        if not turn or turn['status']=='running': raise HTTPException(404,'来源轮次不存在或尚未结束')
+        revision={'revised_query':turn['user_text']}
     if not revision: raise HTTPException(404,'来源会话或已保存的修订不存在，请先保存会话修订')
     status='suggested'
     try:
@@ -78,14 +87,16 @@ async def draft_rule(body: DraftRequest):
         value={'title':'请编辑长期规则','category':'preference','subject':'待确认','content':revision['revised_query'][:1200],
                'match_terms':[],'scope_note':'本项目后续匹配关键词的任务'}
     return {'draft':{**value,'binding':None,'active':True},'status':status,
-            'source_thread_id':body.thread_id,'source_revision_id':body.revision_id,'source_snapshot':revision['revised_query'],'source_query':run['query']}
+            'source_thread_id':body.thread_id,'source_revision_id':body.revision_id,'source_turn_id':body.turn_id,
+            'source_snapshot':revision['revised_query'],'source_query':run['query']}
 
 
 @router.post('',status_code=201)
 def create_rule(body: CreateRule):
     validate_rule(body)
-    if bool(body.source_thread_id)!=bool(body.source_revision_id): raise HTTPException(422,'来源会话和修订必须一起提供')
-    try: return store.save_rule(payload(body),source_thread_id=body.source_thread_id,source_revision_id=body.source_revision_id)
+    if bool(body.source_thread_id)!=bool(body.source_revision_id or body.source_turn_id) or (body.source_revision_id and body.source_turn_id):
+        raise HTTPException(422,'来源会话须对应一个修订或轮次')
+    try: return store.save_rule(payload(body),source_thread_id=body.source_thread_id,source_revision_id=body.source_revision_id,source_turn_id=body.source_turn_id)
     except KeyError: raise HTTPException(404,'来源修订不存在')
     except ValueError as e: raise HTTPException(409,str(e))
 

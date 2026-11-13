@@ -274,10 +274,19 @@ def list_cases(root_id=None):
         args = []
         if root_id:
             sql += ' AND c.root_id=?'; args.append(root_id)
+        from casework.conversation_scope import current
+        selected = current()
+        if selected is not None:
+            if not selected:
+                return []
+            sql += ' AND UPPER(c.case_id) IN (' + ','.join('?' for _ in selected) + ')'
+            args.extend(sorted(selected))
         rows = conn.execute(sql+' ORDER BY c.case_id,c.case_key', args).fetchall()
-        return [{**json.loads(row['data']), 'case_key':row['case_key'], 'root_id':row['root_id'],
+        cases = [{**json.loads(row['data']), 'case_key':row['case_key'], 'root_id':row['root_id'],
                  'fields':json.loads(row['fields']), 'tags':json.loads(row['tags']),
                  'version':row['version'], 'generation':row['generation']} for row in rows]
+        from casework.conversation_scope import allows_case, conditions
+        return [case for case in cases if allows_case(case)] if conditions() else cases
 
 
 def get_case(case_key):

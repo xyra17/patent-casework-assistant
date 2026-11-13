@@ -1,5 +1,5 @@
 <template>
-  <div class="app" :style="paneStyle" :class="{ 'has-log': hasLog && !logCollapsed, 'is-resizing': !!resizing, 'knowledge-mode': ['casework', 'semantic', 'knowledge', 'rules'].includes(sidebarTab), 'business-mode': ['semantic','casework'].includes(sidebarTab), 'database-mode': sidebarTab === 'semantic', 'file-library-mode': sidebarTab === 'knowledge', 'module-navigation-mode': ['casework', 'knowledge', 'rules'].includes(sidebarTab) }">
+  <div class="app" :style="paneStyle" :class="{ 'has-log': hasLog && !logCollapsed, 'conversation-mode': conversationActive && sidebarTab === 'sessions', 'conversation-list-open': conversationListOpen, 'is-resizing': !!resizing, 'knowledge-mode': ['casework', 'semantic', 'knowledge', 'rules'].includes(sidebarTab), 'business-mode': ['semantic','casework'].includes(sidebarTab), 'database-mode': sidebarTab === 'semantic', 'file-library-mode': sidebarTab === 'knowledge', 'module-navigation-mode': ['casework', 'knowledge', 'rules'].includes(sidebarTab) }">
     <!-- 左侧：会话工作区与共享数据管理 -->
     <aside class="sidebar glass-card">
       <div class="brand">
@@ -36,7 +36,7 @@
 
       <nav class="workspace-nav" aria-label="工作区导航">
         <button type="button" class="nav-item" :class="{active: sidebarTab === 'sessions'}"
-          :aria-pressed="sidebarTab === 'sessions'" @click="sidebarTab = 'sessions'">会话</button>
+          :aria-pressed="sidebarTab === 'sessions'" :aria-expanded="conversationActive ? conversationListOpen : undefined" @click="sidebarTab = 'sessions'; conversationListOpen = !conversationListOpen">会话</button>
         <button type="button" class="nav-item" :class="{active: trashVisible}" aria-haspopup="dialog"
           :aria-expanded="trashVisible" @click="trashVisible = true">回收站</button>
         <button type="button" class="nav-item" :class="{active: sidebarTab === 'casework'}" :aria-pressed="sidebarTab==='casework'" @click="sidebarTab='casework'">案件</button>
@@ -69,14 +69,17 @@
                   :data-thread-id="s.thread_id"
                   class="session-item"
                   :class="{ active: s.thread_id === store.currentThreadId }"
+                  role="button" tabindex="0" :aria-label="s.query" :aria-pressed="s.thread_id === store.currentThreadId"
+                  @keydown.enter.self.prevent="onSwitch(s.thread_id)" @keydown.space.self.prevent="onSwitch(s.thread_id)"
                   @click="onSwitch(s.thread_id)"
                 >
                   <div class="session-head">
                     <span class="status-dot" :class="s.status"></span>
                     <el-tag :type="statusTagType(s.status, s)" size="small" effect="plain">{{ statusText(s.status, s) }}</el-tag>
+                    <span class="session-category">{{ sessionCategory(s.query) }}</span>
                     <span class="session-time">{{ s.created_at.slice(5, 16) }}</span>
                   </div>
-                  <div class="session-query">{{ s.query }}</div>
+                  <div class="session-query" :title="s.query">{{ s.query }}</div>
                   <div class="session-actions">
                     <el-button link size="small" @click.stop="rerun(s.thread_id)">
                       <el-icon><RefreshRight /></el-icon>重跑
@@ -113,7 +116,7 @@
         v-else-if="!session"
         @pick="fillTemplate"
       />
-      <ResultPreview v-else :session="session" :execution-expanded="!logCollapsed" @toggle-execution="toggleExecutionDetails" @rerun="rerun" @refresh="loadSessionDetail" @show-evidence="openEvidence" @clarify="answerClarification" @show-files="filesVisible=true" />
+      <ResultPreview v-else :session="session" :execution-expanded="!logCollapsed" @toggle-execution="toggleExecutionDetails" @rerun="rerun" @refresh="loadSessionDetail" @conversation-active="conversationActive=$event" @new-task="focusInput" @show-evidence="openEvidence" @clarify="answerClarification" @show-files="filesVisible=true" />
     </main>
 
     <div class="pane-resizer left-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="调整左侧会话栏宽度"
@@ -139,7 +142,7 @@
     </aside>
 
     <!-- 底部任务输入通栏 -->
-    <footer v-show="!['casework', 'semantic', 'knowledge', 'rules'].includes(sidebarTab)" class="taskbar">
+    <footer v-show="!conversationActive && !['casework', 'semantic', 'knowledge', 'rules'].includes(sidebarTab)" class="taskbar">
       <TaskInput :submit-task="startTask" />
     </footer>
 
@@ -178,6 +181,7 @@ const KnowledgePanel = defineAsyncComponent(() => import('./components/Knowledge
 const LongTermRulesPanel = defineAsyncComponent(() => import('./components/LongTermRulesPanel.vue'))
 const RecycleBin = defineAsyncComponent(() => import('./components/RecycleBin.vue'))
 const trashVisible = ref(false)
+const conversationActive=ref(false),conversationListOpen=ref(false)
 const filesVisible = ref(false)
 const ResultPreview = defineAsyncComponent(() => import('./components/ResultPreview.vue'))
 import { createSessionConnections } from './sessionConnection'
@@ -549,6 +553,7 @@ async function terminate(threadId) {
 
 async function onSwitch(threadId) {
   filesVisible.value = false
+  conversationListOpen.value = false
   switchSession(threadId)
   sidebarTab.value = 'sessions'
   const session = getSession(threadId)
@@ -599,6 +604,7 @@ function openCaseTask(value) {
 }
 
 function fillTemplate(value) {
+  conversationActive.value=false
   store.pendingTemplate = typeof value === 'object' ? value : null
   store.pendingSources = typeof value === 'object' ? value.allowed_sources ?? null : null
   store.pendingQuery = typeof value === 'object' ? value.value : value
@@ -617,6 +623,14 @@ function statusText(status, session) {
   if (status === 'completed' && session?.degraded) return '未达标'
   return { running: '运行中', completed: '已完成', failed: '失败', cancelled:'已取消', awaiting_input:'待你确认' }[status] || status
 }
+function sessionCategory(query = '') {
+  if (/会议|参会|三方/.test(query)) return '会议回顾'
+  if (/期限|所限|未来两周/.test(query)) return '期限核对'
+  if (/待核实|未核实|核验/.test(query)) return '信息核验'
+  if (/客户/.test(query)) return '客户查询'
+  if (/负责|承办人|代理师/.test(query)) return '人员查询'
+  return '案件问答'
+}
 function statusTagType(status, session) {
   if (status === 'completed' && session?.result_assessment?.product_boundary) return {VERIFIED:'success',REVIEW_REQUIRED:'warning',INCOMPLETE:'warning',BLOCKED:'danger'}[session.result_assessment.product_boundary.status] || 'info'
   if (status === 'completed' && session?.degraded) return 'warning'
@@ -628,6 +642,17 @@ function toastIcon(type) {
 </script>
 
 <style scoped>
+.app.conversation-mode{grid-template-rows:minmax(0,1fr);grid-template-areas:'sidebar main'}
+.app.conversation-mode.has-log{grid-template-areas:'sidebar main log'}
+@media(max-width:1100px){
+  .app.conversation-mode,.app.conversation-mode.has-log{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);grid-template-areas:'sidebar' 'main';height:100dvh;min-height:0;overflow:hidden;padding:8px;gap:8px}
+  .app.conversation-mode .sidebar{min-height:0;max-height:none;padding:8px;gap:0}
+  .app.conversation-mode .brand{display:none}
+  .app.conversation-mode .sidebar-content{display:none}
+  .app.conversation-mode.conversation-list-open .sidebar-content{display:flex;height:180px;max-height:26dvh;margin-top:8px}
+  .app.conversation-mode .main{min-height:0;overflow:hidden}
+  .app.conversation-mode .log-side{position:fixed;inset:64px 8px 8px;z-index:30;width:auto;max-height:none}
+}
 .app.knowledge-mode { grid-template-rows: minmax(0, 1fr); grid-template-areas: 'sidebar main'; }
 .knowledge-nav-help { padding: 14px 2px; font-size: 12px; line-height: 1.8; }
 .knowledge-nav-help p { color: var(--text-secondary); margin-top: 12px; }
@@ -833,29 +858,15 @@ function toastIcon(type) {
 .session-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   position: relative;
 }
-.session-item {
-  position: relative;
-  border: 1px solid var(--border);
-  border-left: 3px solid transparent;
-  border-radius: 10px;
-  padding: 9px 10px;
-  cursor: pointer;
-  background: var(--card-bg);
-  transition: border-color 0.2s, background 0.2s, transform 0.2s;
-}
-.session-item:hover {
-  border-color: var(--primary-soft);
-  transform: translateY(-1px);
-}
-.session-item.active {
-  border-left-color: var(--primary);
-  border-color: var(--primary-soft);
-  background: var(--primary-soft);
-  box-shadow: 0 4px 14px var(--primary-soft);
-}
+.session-item {position:relative;border:1px solid transparent;border-left:3px solid transparent;border-radius:10px;padding:10px 11px;cursor:pointer;background:transparent;transition:border-color .15s,background .15s;}
+.session-item:hover {border-color:var(--border);background:color-mix(in srgb,var(--bg) 60%,var(--card-bg));}
+.session-item.active {border-color:color-mix(in srgb,var(--primary) 16%,var(--border));border-left-color:var(--primary);background:color-mix(in srgb,var(--primary) 6%,var(--card-bg));box-shadow:none;}
+.session-item:focus-visible {outline:2px solid var(--primary);outline-offset:1px;}
+.session-item :deep(.el-tag) {height:19px;line-height:17px;font-size:10px;border-color:transparent;background:transparent;padding:0;color:var(--text-secondary);}
+.session-item.active :deep(.el-tag) {color:var(--primary);}
 .session-enter-active,
 .session-leave-active {
   transition: opacity 0.22s ease, transform 0.22s ease;
@@ -877,6 +888,7 @@ function toastIcon(type) {
   gap: 6px;
   margin-bottom: 5px;
 }
+.session-category {font-size:10px;line-height:18px;padding:0 6px;border-radius:4px;color:color-mix(in srgb,var(--text) 72%,var(--card-bg));background:color-mix(in srgb,var(--bg) 75%,var(--card-bg));white-space:nowrap;}
 .status-dot {
   width: 6px;
   height: 6px;
@@ -894,8 +906,9 @@ function toastIcon(type) {
   white-space: nowrap;
 }
 .session-query {
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.65;
+  font-weight: 500;
   color: var(--text);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -903,17 +916,11 @@ function toastIcon(type) {
   overflow: hidden;
   word-break: break-word;
 }
-.session-actions {
-  display: flex;
-  gap: 2px;
-  margin-top: 3px;
-  opacity: 0.8;
-  transition: opacity 0.2s;
-}
-.session-item:hover .session-actions,
-.session-item.active .session-actions {
-  opacity: 1;
-}
+.session-actions {position:absolute;top:7px;right:7px;display:flex;align-items:center;gap:4px;margin:0;opacity:0;pointer-events:none;background:var(--card-bg);border-radius:5px;padding:0 3px;transition:opacity .15s;}
+.session-actions :deep(.el-button) {font-size:11px;min-height:22px;padding:3px 2px;}
+.session-item:hover .session-actions,.session-item:focus-within .session-actions {opacity:1;pointer-events:auto;}
+.session-item:hover .session-time,.session-item:focus-within .session-time {visibility:hidden;}
+@media(hover:none){.session-actions{position:static;opacity:1;pointer-events:auto;margin-top:3px;background:transparent;}.session-item .session-time{visibility:visible;}}
 
 .toasts {
   position: fixed;
@@ -1041,6 +1048,7 @@ function toastIcon(type) {
 
 <style scoped>
 .history-error{padding:8px 12px;color:var(--el-color-danger);font-size:13px;line-height:1.6}.history-more{width:100%;margin:8px 0}
+@media(max-width:1100px){.app.conversation-mode:not(.knowledge-mode) .sidebar{height:auto;min-height:0;max-height:none}}
 </style>
 
 <style scoped>

@@ -38,10 +38,14 @@ def bind(value, choices, field):
 
 def bind_filters(params):
     from casework import store,catalog
-    cases=store.list_cases()
+    from casework.conversation_scope import scope
+    # Identity resolution uses the published directory; task results remain filtered.
+    with scope(None):
+        cases=store.list_cases()
+        iprs={p for m in catalog.meetings() for p in m['iprs']}
     choices={field:{c[key] for c in cases if c.get(key)} for field,key in [
         ('client','client_alias'),('owner','owner_name'),('domain','technical_domain')]}
-    choices['ipr']={p for m in catalog.meetings() for p in m['iprs']}
+    choices['ipr']=iprs
     result=dict(params)
     for field in choices:
         if params.get(field):result[field]=bind(params[field],choices[field],field)

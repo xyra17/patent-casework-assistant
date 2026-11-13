@@ -77,6 +77,17 @@ def _add(title,columns,rows,*,statistics=None,details=None,has_more=False,answer
                           'model_rows':count,'evidence_rows':min(count,500),
                           'fetch_truncated':has_more,'model_truncated':False,'evidence_truncated':count>500},
           'casework':True,'coverage':store.coverage()}
+    if isinstance(details, dict):
+        item['casework_filters'] = {k:v for k,v in details.items() if k in (
+            'owner','client','stage','domain','due_field','due_status','missing_date_field','as_of','start_month','end_month')
+            and v is not None and v != ''}
+    from casework.conversation_scope import current
+    selected = current()
+    if selected is not None:
+        item['conversation_case_ids'] = sorted(selected)
+        item['completeness']['scope'] = 'conversation_selected_cases'
+        for metric in item['statistics'].get('metrics', []):
+            metric.setdefault('filters', []).append({'field':'case_id','op':'in','value':sorted(selected)})
     if date_completeness is not None:item['date_completeness']=date_completeness
     if answer_contract is not None:
         item['answer_contract']=answer_contract
@@ -750,6 +761,9 @@ def search_case_archive(query:str,limit:int=6,domain:str|None=None,owner:str|Non
         result=search(query,limit=30 if completed_only or domain or owner else limit,kind=kind,allow_vector=allow_vector,query_scope=query_scope)
         accepted=[]
         for case in result['results']:
+            from casework.conversation_scope import allows
+            if not allows(case['case_id']):
+                continue
             # Only source-document claims establish archive metadata. Platform overrides
             # belong to db_query and must not leak through a knowledge-only task.
             snapshot=store.get_case(case['case_key']);facts={}
@@ -825,6 +839,9 @@ def read_case_archive_document(file_id:str,revision:str|None=None,parser_key:str
     try:
         if offset<0 or not 1<=limit<=12:raise ValueError('分页参数超限')
         item=catalog.document(file_id,revision,parser_key);chunks=item['payload']['chunks'];selected=chunks[offset:offset+limit]
+        from casework.conversation_scope import allows
+        if not allows(item['case_id']):
+            raise ValueError('该原文不属于本轮已确认的案件范围')
         case={'case_id':item['case_id'],'title':item['relative_path']}
         for chunk in selected:
             chunk['evidence_id']=_proof({'file_id':file_id,'revision':item['revision'],'parser_key':item['parser_key'],

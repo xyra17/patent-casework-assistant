@@ -20,11 +20,13 @@ def init_db():
         ''')
         columns={r[1] for r in conn.execute('PRAGMA table_info(long_term_rules)')}
         if 'source_query' not in columns: conn.execute('ALTER TABLE long_term_rules ADD COLUMN source_query TEXT')
+        if 'source_turn_id' not in columns: conn.execute('ALTER TABLE long_term_rules ADD COLUMN source_turn_id TEXT')
 
 
 def _item(row):
     return {**json.loads(row['payload']), 'id':row['id'], 'revision':row['revision'],
             'active':bool(row['active']), 'source_thread_id':row['source_thread_id'],
+            'source_turn_id':row['source_turn_id'],
             'source_revision_id':row['source_revision_id'], 'source_snapshot':row['source_snapshot'], 'source_query':row['source_query'],
             'created_at':row['created_at'], 'updated_at':row['updated_at']}
 
@@ -43,7 +45,7 @@ def get_rule(ident):
         return _item(row) if row else None
 
 
-def save_rule(payload, *, ident=None, expected_revision=None, source_thread_id=None, source_revision_id=None):
+def save_rule(payload, *, ident=None, expected_revision=None, source_thread_id=None, source_revision_id=None, source_turn_id=None):
     init_db()
     with storage._LOCK, storage._connect() as conn:
         conn.execute('BEGIN IMMEDIATE')
@@ -61,14 +63,19 @@ def save_rule(payload, *, ident=None, expected_revision=None, source_thread_id=N
                 raise ValueError('项目规则最多500条，请先清理不再使用的规则')
             ident=uuid4().hex;revision=1;operation='create';snapshot=None;source_query=None
             if source_thread_id:
-                row=conn.execute('SELECT revised_query FROM intent_revisions WHERE thread_id=? AND id=?',
-                                 (source_thread_id,source_revision_id)).fetchone()
+                if source_turn_id:
+                    row=conn.execute("SELECT user_text AS revised_query FROM conversation_turns WHERE thread_id=? AND turn_id=? AND status!='running'",
+                                     (source_thread_id,source_turn_id)).fetchone()
+                else:
+                    row=conn.execute('SELECT revised_query FROM intent_revisions WHERE thread_id=? AND id=?',
+                                     (source_thread_id,source_revision_id)).fetchone()
                 if row is None: raise KeyError('来源修订不存在')
                 snapshot=row['revised_query']
                 origin=conn.execute('SELECT query FROM runs WHERE thread_id=?',(source_thread_id,)).fetchone()
                 source_query=origin['query'] if origin else None
             conn.execute('INSERT INTO long_term_rules(id,revision,active,payload,source_thread_id,source_revision_id,source_snapshot,source_query,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
                          (ident,revision,int(payload['active']),storage._dumps(payload),source_thread_id,source_revision_id,snapshot,source_query,now,now))
+            conn.execute('UPDATE long_term_rules SET source_turn_id=? WHERE id=?', (source_turn_id,ident))
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='rule_vectors'").fetchone():
             conn.execute('DELETE FROM rule_vectors WHERE rule_id=?',(ident,))
         conn.execute('INSERT INTO long_term_rule_versions VALUES(?,?,?,?,?)',

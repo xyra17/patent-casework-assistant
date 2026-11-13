@@ -132,6 +132,9 @@ def list_sql_tables() -> str:
 
 def get_table_data(table_name: str) -> str:
     """预览指定表前 100 行，返回范围信息及最多 30 行的 JSON 行视图。"""
+    from casework.conversation_scope import restricted
+    if restricted():
+        return '本轮继承了案件范围与筛选，请使用query_department_cases；不能以全表预览绕过条件。'
     from rules.engine import raw_query_denial
     rule_denial = raw_query_denial()
     if rule_denial:
@@ -202,6 +205,9 @@ def describe_schema() -> dict[str, list[dict]]:
 
 def run_read_query(sql: str, params: list | tuple | None = None, limit: int = 200) -> dict:
     """执行语义层生成的只读 SELECT，返回列/行；不做自然语言 SQL 拼接。"""
+    from casework.conversation_scope import restricted
+    if restricted():
+        raise PermissionError('本轮案件筛选须通过query_department_cases执行，通用SQL不能绕过会话条件')
     from rules.engine import raw_query_denial
     denial = raw_query_denial()
     if denial:
@@ -233,6 +239,9 @@ def run_read_query(sql: str, params: list | tuple | None = None, limit: int = 20
 
 def fetch_table_rows(table: str, filters: dict[str, str], limit: int = 100) -> dict:
     """按图表点击的维度值读取明细行（表/字段白名单 + 参数化查询）。"""
+    from casework.conversation_scope import restricted
+    if restricted():
+        raise PermissionError('本轮案件范围不允许通用SQL明细查询，请使用案件工具')
     from rules.engine import raw_query_denial
     denial = raw_query_denial()
     if denial:
@@ -280,6 +289,9 @@ def fetch_table_rows(table: str, filters: dict[str, str], limit: int = 100) -> d
 
 def execute_sql_query(sql: str) -> str:
     """执行只读 SQL：最多取回 500 行，模型视图最多 30 行，显式返回范围与截断。"""
+    from casework.conversation_scope import restricted
+    if restricted():
+        return '本轮已限定具体案件集合，请使用query_department_cases查询该范围；自由SQL不能绕过会话案件范围。'
     from rules.engine import raw_query_denial
     rule_denial = raw_query_denial()
     if rule_denial:

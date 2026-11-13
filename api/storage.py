@@ -115,6 +115,17 @@ def init_db() -> None:
               id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL,
               agent TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS conversation_turns (
+              turn_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+              execution_id TEXT, parent_turn_id TEXT, kind TEXT NOT NULL, user_text TEXT NOT NULL,
+              task TEXT NOT NULL, state_json TEXT NOT NULL, snapshot_json TEXT,
+              status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+              UNIQUE(thread_id,ordinal)
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_thread ON conversation_turns(thread_id,ordinal);
+            CREATE TABLE IF NOT EXISTS conversation_pending (
+              thread_id TEXT PRIMARY KEY, parent_turn_id TEXT, payload TEXT NOT NULL
+            );
             """
         )
 
@@ -151,13 +162,17 @@ def init_db() -> None:
 def mark_interrupted() -> None:
     """服务重启后，旧进程里 running 的任务已经不可能继续执行。"""
     with _LOCK, _connect() as conn:
+        interrupted = [row['thread_id'] for row in conn.execute("SELECT thread_id FROM runs WHERE status='running'")]
         conn.execute(
             "UPDATE runs SET status='failed', error=?, updated_at=? WHERE status='running'",
             ("服务重启，任务已中断", _now()),
         )
+        from api.conversation import finish_run
+        for thread_id in interrupted:
+            finish_run(conn, _run_dict(conn.execute('SELECT * FROM runs WHERE thread_id=?', (thread_id,)).fetchone()))
 
 
-def create_run(thread_id: str, query: str, task_query: str, require_pdf: bool, max_rounds: int = 3, expected_revision_id: int | None = None, rule_context: dict | None = None, *, round_mode: str = 'manual', allowed_sources=None, clarification_answer=None) -> dict:
+def create_run(thread_id: str, query: str, task_query: str, require_pdf: bool, max_rounds: int = 3, expected_revision_id: int | None = None, rule_context: dict | None = None, *, round_mode: str = 'manual', allowed_sources=None, clarification_answer=None, conversation_prepared=None, followup=None) -> dict:
     from api.task_sources import normalize
     allowed_sources = normalize(allowed_sources)
     now = _now()
@@ -166,6 +181,13 @@ def create_run(thread_id: str, query: str, task_query: str, require_pdf: bool, m
         existing = conn.execute("SELECT * FROM runs WHERE thread_id=?", (thread_id,)).fetchone()
         if existing and existing['deleted_at']:
             raise ValueError('会话已在回收站，请先恢复')
+        from api import conversation
+        if existing:
+            conversation.seed_legacy(_run_dict(existing), conn)
+        if followup:
+            if existing is None:
+                raise ValueError('追问的会话不存在')
+            conversation.validate_parent(_run_dict(existing), followup, conn)
         if existing:
             query, task_query = existing['query'], existing['task_query']
         revision = conn.execute("SELECT id, revised_query FROM intent_revisions WHERE thread_id=? ORDER BY id DESC LIMIT 1", (thread_id,)).fetchone()
@@ -182,6 +204,10 @@ def create_run(thread_id: str, query: str, task_query: str, require_pdf: bool, m
             suffix = task_query[len(query):] if task_query.startswith(query) else ''
             effective_query = revision['revised_query'] + suffix
         effective_query = extend_query(effective_query, response, previous_run)
+        if conversation_prepared:
+            effective_query = conversation_prepared['task']
+        elif existing and not response and not existing['clarification_response_json'] and existing['execution_query'] and existing['applied_intent_id'] == expected_revision_id:
+            effective_query = existing['execution_query']
         if existing:
             previous = _run_dict(existing)
             previous['execution_id'] = existing['execution_id'] or 'legacy-' + uuid4().hex
@@ -223,7 +249,15 @@ def create_run(thread_id: str, query: str, task_query: str, require_pdf: bool, m
         conn.execute("DELETE FROM events WHERE thread_id=?", (thread_id,))
         for table in ("evidence_records", "context_artifacts", "context_decisions"):
             conn.execute(f"DELETE FROM {table} WHERE thread_id=?", (thread_id,))
-        return {"execution_query": effective_query, "applied_intent_id": revision['id'] if revision else None, "started_at": now, "execution_id": execution_id}
+        run = _run_dict(conn.execute('SELECT * FROM runs WHERE thread_id=?', (thread_id,)).fetchone())
+        if conversation_prepared is None and existing:
+            prior = conversation.latest(thread_id, conn)
+            revised = existing['applied_intent_id'] != expected_revision_id
+            state = {'goal':effective_query,'conditions':{},'case_ids':None,'unresolved':[], 'memory_scope':'conversation'} if revised else {**prior['state'],'goal':effective_query}
+            conversation_prepared = {'state':state, 'kind':'revision' if revised else 'clarification' if response else 'retry',
+                                     'text':(response or {}).get('text') or effective_query}
+        turn_id = conversation.record_run(conn, run, conversation_prepared)
+        return {"execution_query": effective_query, "applied_intent_id": revision['id'] if revision else None, "started_at": now, "execution_id": execution_id, 'turn_id':turn_id}
 
 
 def preview_execution_query(thread_id: str, query: str, task_query: str, expected_revision_id: int | None) -> str:
@@ -236,6 +270,8 @@ def preview_execution_query(thread_id: str, query: str, task_query: str, expecte
     latest=revisions[0] if revisions else None
     if (latest['id'] if latest else None)!=expected_revision_id:
         raise ValueError('任务修订已更新，请刷新会话后重新执行')
+    if run.get('execution_query') and not run.get('clarification_response') and run['applied_intent_id'] == expected_revision_id:
+        return run['execution_query']
     if not latest: return run['task_query']
     suffix=run['task_query'][len(run['query']):] if run['task_query'].startswith(run['query']) else ''
     return latest['revised_query']+suffix
@@ -312,6 +348,9 @@ def append_event(thread_id: str, event: dict) -> None:
                 f"UPDATE runs SET {assignments} WHERE thread_id=?",
                 (*updates.values(), thread_id),
             )
+        if name in ('task_result', 'task_cancelled', 'task_clarification', 'error'):
+            from api.conversation import finish_run
+            finish_run(conn, _run_dict(conn.execute('SELECT * FROM runs WHERE thread_id=?', (thread_id,)).fetchone()))
 
 
 def _session_dir(thread_id: str) -> str:
@@ -427,6 +466,8 @@ def get_run(thread_id: str) -> dict | None:
 
 def delete_run(thread_id: str) -> None:
     with _LOCK, _connect() as conn:
+        conn.execute('DELETE FROM conversation_turns WHERE thread_id=?', (thread_id,))
+        conn.execute('DELETE FROM conversation_pending WHERE thread_id=?', (thread_id,))
         for table in ("evidence_records", "context_artifacts", "context_decisions", "intent_revisions", "execution_history", "history_sequence"):
             conn.execute(f"DELETE FROM {table} WHERE thread_id=?", (thread_id,))
         conn.execute("DELETE FROM events WHERE thread_id=?", (thread_id,))

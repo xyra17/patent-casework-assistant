@@ -1,17 +1,11 @@
 <template>
-  <div class="result-preview glass-card">
-    <el-descriptions v-if="session?.result" :column="1" border size="small" title="分项结果（内部审查）">
-      <el-descriptions-item v-for="item in assessmentItems" :key="item.key" :label="item.label">
-        <el-tag size="small" :type="item.type">{{ item.status }}</el-tag>
-        <span> {{ item.detail }}</span>
-      </el-descriptions-item>
-    </el-descriptions>
-    <el-alert v-if="boundary" :title="`业务结果：${boundary.label}`" :type="boundary.type" :closable="false" show-icon>
+  <div class="result-preview glass-card" :class="{'conversation-view':activeTab === 'conversation'}">
+    <el-alert v-if="boundary && activeTab !== 'conversation'" :title="`业务结果：${boundary.label}`" :type="boundary.type" :closable="false" show-icon>
       <p v-for="issue in boundary.issues" :key="issue">{{ issue }}</p>
       <p v-if="boundary.professional_judgments.length">专业结论尚未经人工确认；支持证据和Agent初步分析须分别阅读。</p>
     </el-alert>
     <el-alert
-      v-if="session?.degraded"
+      v-if="session?.degraded && activeTab !== 'conversation'"
       class="degraded-alert"
       type="warning"
       :closable="false"
@@ -22,6 +16,7 @@
       <div class="preview-head-actions">
       <button v-if="hasSessionFiles" type="button" class="session-files-button" @click="emit('show-files')"><el-icon aria-hidden="true"><FolderOpened /></el-icon>会话附件与报告</button>
       <button id="execution-details-toggle" type="button" class="execution-details-toggle" :class="{attention:session?.status==='failed' || session?.degraded}"
+        aria-label="执行详情"
         :aria-expanded="executionExpanded" aria-controls="execution-details" @click="emit('toggle-execution')">
         <span v-if="session?.status==='running'" class="execution-running-dot" aria-hidden="true"></span>
         <el-icon v-else-if="session?.status==='failed' || session?.degraded" aria-hidden="true"><Warning /></el-icon>
@@ -84,7 +79,9 @@
           </div>
           </div>
         </div>
+        <el-button class="continue-conversation" type="primary" plain @click="activeTab='conversation'">继续追问 · 查看对话与记忆</el-button>
       </el-tab-pane>
+      <el-tab-pane label="对话与记忆" name="conversation"><ConversationPanel :session="session" :active="activeTab === 'conversation'" @refresh="emit('refresh',$event)" @new-task="activeTab='answer';emit('new-task')" /></el-tab-pane>
       <el-tab-pane label="任务理解" name="understanding">
         <TaskUnderstanding :key="session?.thread_id" :session="session" @rerun="(id, sources) => emit('rerun', id, sources)" @refresh="emit('refresh', $event)" />
       </el-tab-pane>
@@ -144,7 +141,7 @@
 <script setup>
 import { statisticsNotice } from '../statisticalValidation.js'
 import { evidenceScopeText } from '../evidenceScope.js'
-import { ref, computed, watch, nextTick, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, nextTick, defineAsyncComponent, onUnmounted } from 'vue'
 import { parseResultMarkdown } from '../resultMarkdown'
 import DOMPurify from 'dompurify'
 import { listFiles, listAttachments, downloadFile, downloadChartReport, runDrilldown } from '../api'
@@ -154,16 +151,18 @@ import { loadPanel } from '../loadPanel'
 const ExecutionHistory = loadPanel(() => import('./ExecutionHistory.vue'), '执行记录')
 import TaskUnderstanding from './TaskUnderstanding.vue'
 import ClarificationPanel from './ClarificationPanel.vue'
+import ConversationPanel from './ConversationPanel.vue'
 import { selectCurrentPdf,executionResultContent } from '../previewState'
 import { sessionOutputFiles } from '../sessionFiles'
 import { qualitySummaryText } from '../reflection'
-import { resultAssessmentItems, productBoundaryView } from '../resultAssessment'
+import { productBoundaryView } from '../resultAssessment'
 
 const props = defineProps({ session: Object, executionExpanded: Boolean })
 const boundary = computed(() => productBoundaryView(props.session))
-const assessmentItems = computed(() => resultAssessmentItems(props.session))
-const emit = defineEmits(['rerun', 'refresh', 'show-evidence', 'clarify', 'show-files', 'toggle-execution'])
+const emit = defineEmits(['rerun', 'refresh', 'show-evidence', 'clarify', 'show-files', 'toggle-execution', 'conversation-active', 'new-task'])
 const activeTab = ref('answer')
+watch(activeTab, value => emit('conversation-active',value === 'conversation'),{immediate:true})
+onUnmounted(()=>emit('conversation-active',false))
 watch(() => props.session?.thread_id, () => { activeTab.value = 'answer' })
 const pdfUrl = ref('')
 const pdfRequired = computed(() => props.session?.plan?.require_pdf ?? props.session?.require_pdf ?? false)
@@ -347,9 +346,19 @@ function zoom(v) {
 .has-session-files.execution-expanded .tabs :deep(.el-tabs__header) {padding-right:268px;}
 .tabs :deep(.el-tabs__item) {padding-bottom:4px;}
 .tabs :deep(.el-tabs__nav-wrap)::after {display:none;}
+.conversation-view .execution-details-toggle{background:var(--card-bg);color:var(--text-secondary);border-color:var(--border);box-shadow:none;font-weight:400;min-height:30px;padding:5px 9px;font-size:12px}
+.conversation-view .execution-details-toggle.attention{color:var(--danger-text);border-color:color-mix(in srgb,var(--danger-text) 30%,var(--border))}
+.conversation-view .session-files-button{background:var(--card-bg);border-color:var(--border);color:var(--text-secondary);font-size:12px;font-weight:400;min-height:30px;padding:5px 9px}
 @container (max-width:500px) {
   .preview-head-actions {position:static;align-self:flex-end;margin-bottom:8px;flex-wrap:wrap;}
   .tabs :deep(.el-tabs__header),.has-session-files .tabs :deep(.el-tabs__header),.has-session-files.execution-expanded .tabs :deep(.el-tabs__header) {padding-right:0;}
+  .conversation-view .preview-head-actions{position:absolute;top:2px;right:0;margin:0;gap:3px;flex-wrap:nowrap}
+  .conversation-view .tabs :deep(.el-tabs__header){padding-right:38px}
+  .conversation-view .has-session-files .tabs :deep(.el-tabs__header){padding-right:72px}
+  .conversation-view .execution-details-toggle,.conversation-view .session-files-button{width:30px;height:30px;padding:4px;min-height:30px;font-size:0;gap:0}
+  .conversation-view .execution-details-toggle span{display:none}
+  .conversation-view .execution-details-toggle .el-icon,.conversation-view .session-files-button .el-icon{font-size:15px}
+  .conversation-view .execution-details-toggle .el-icon:last-child{display:none}
 }
 .degraded-alert {
   margin-bottom: 6px;
@@ -450,7 +459,7 @@ function zoom(v) {
 </style>
 
 <style scoped>
-.answer-wrap{height:100%;min-height:0;display:flex;flex-direction:column}.answer-body{font-size:15px;line-height:1.85}.answer-empty{padding:20px 0;color:var(--text-secondary);font-size:14px;line-height:1.7}
+.answer-wrap{height:calc(100% - 44px);min-height:0;display:flex;flex-direction:column}.continue-conversation{margin-top:10px;max-width:100%}.answer-body{font-size:15px;line-height:1.85}.answer-empty{padding:20px 0;color:var(--text-secondary);font-size:14px;line-height:1.7}
 .answer-content{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
 .answer-content .answer-body{overflow:visible}
 .answer-actions{display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:12px;min-height:30px;padding:0 0 10px;flex-shrink:0;}

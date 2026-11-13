@@ -648,6 +648,9 @@ def _record(result: dict, title: str) -> str:
 def run_semantic_query(metric: str = "", dimensions: list[str] | None = None,
                        filters: dict[str, Any] | None = None, limit: int = 100,
                        metrics: list[str] | None = None) -> str:
+    from casework.conversation_scope import restricted
+    if restricted():
+        return '本轮限定具体案件集合，请使用query_department_cases查询；通用语义查询不支持继承案件范围。'
     names = list(metrics or [])
     if metric:
         names.insert(0, metric)
@@ -662,6 +665,9 @@ def run_semantic_query(metric: str = "", dimensions: list[str] | None = None,
 
 def run_semantic_drilldown(hierarchy: str, field: str, value: str,
                            metric: str, limit: int = 100) -> str:
+    from casework.conversation_scope import restricted
+    if restricted():
+        return '本轮限定具体案件集合，请使用query_department_cases查询；通用语义下钻不支持继承案件范围。'
     result = engine.drilldown(hierarchy, field, value, metric, limit=limit)
     evidence_id = _record(result, f"语义下钻：{hierarchy}.{field}")
     return (f"[证据 {evidence_id}] " if evidence_id else "") + engine.format_result(result)

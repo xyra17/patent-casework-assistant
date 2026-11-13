@@ -39,7 +39,7 @@ export function waitForWS(ws) {
 
 // REST 封装（开发期经 Vite 代理转发到 FastAPI）
 
-export async function submitTask(query, threadId, taskQuery = '', requirePdf = false, maxRounds = 3, expectedRevisionId = null, skipRuleVersions = [], roundMode = 'manual', allowedSources = ['db_query', 'knowledge'], clarificationAnswer = null, productContext = null) {
+export async function submitTask(query, threadId, taskQuery = '', requirePdf = false, maxRounds = 3, expectedRevisionId = null, skipRuleVersions = [], roundMode = 'manual', allowedSources = ['db_query', 'knowledge'], clarificationAnswer = null, productContext = null, followup = null) {
   const res = await fetch('/api/task', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -55,6 +55,7 @@ export async function submitTask(query, threadId, taskQuery = '', requirePdf = f
       allowed_sources: allowedSources,
       ...(productContext ? {product_context:productContext} : {}),
       ...(clarificationAnswer ? {clarification_answer:clarificationAnswer} : {}),
+      ...(followup ? {followup} : {}),
     }),
   })
   return (await checked(res)).json()
@@ -91,6 +92,22 @@ export async function listRuns(limit = 50, offset = 0, tracked = [], before = nu
 export async function getRun(threadId) {
   const res = await fetch(`/api/runs/${encodeURIComponent(threadId)}`)
   return (await checked(res)).json()
+}
+
+export async function getConversation(threadId, before = null) {
+  const params = new URLSearchParams({limit:'20'})
+  if (before != null) params.set('before', before)
+  return (await checked(await fetch(`/api/runs/${encodeURIComponent(threadId)}/conversation?${params}`))).json()
+}
+
+export async function getConversationTurn(threadId, turnId) {
+  return (await checked(await fetch(`/api/runs/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}`))).json()
+}
+
+export async function draftTurnRule(threadId, turnId) {
+  return (await checked(await fetch('/api/long-term-rules/draft', {
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thread_id:threadId,turn_id:turnId}),
+  }))).json()
 }
 
 export async function runDrilldown(threadId, evidenceId, filters) {

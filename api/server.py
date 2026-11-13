@@ -25,6 +25,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 from agent.main_agent import run_deep_agent, TaskDeadlineExceeded
 from api import evidence, storage
 from api import task_sources, clarification, recycle_bin
+from api import conversation
 from api.query_result import build_query_result, business_review_from_run
 from api.knowledge import router as knowledge_router
 from api.data_import import router as data_import_router
@@ -48,6 +49,7 @@ app.include_router(business_database_router)
 app.include_router(business_edit_router)
 app.include_router(business_advanced_router)
 app.include_router(casework_router)
+app.include_router(conversation.router)
 @app.middleware("http")
 async def fresh_entry_page(request, call_next):
     thread_id = request.query_params.get('thread_id')
@@ -145,6 +147,7 @@ class TaskRequest(BaseModel):
         default_factory=lambda: list(task_sources.DEFAULT_SOURCES), max_length=3)
     clarification_answer: clarification.ClarificationAnswer | None = None
     product_context: ProductContext | None = None
+    followup: conversation.Followup | None = None
 
 
 @app.get("/api/health")
@@ -254,7 +257,17 @@ async def _run_task(thread_id: str, query: str, max_rounds: int = 3) -> None:
     run = storage.get_run(thread_id) or {}
     from tools import product_boundary
     product = next((e.get('data') for e in reversed(run.get('events') or []) if e.get('event') == 'product_boundary_request'), None)
-    with task_sources.scope(run.get('allowed_sources')), clarification.scope(run.get('clarification_response')), product_boundary.scope(product):
+    from casework.conversation_scope import scope as case_scope
+    turn = conversation.latest(thread_id) or {}
+    if turn.get('kind') == 'history':
+        original = conversation.get_turn(thread_id, turn['state']['reference_turn_id'])
+        snapshot = original['snapshot']
+        await monitor.report(thread_id, 'task_result', '已读取历史快照，未查询当前数据', {
+            'result':f"历史快照 · 第{original['ordinal']}轮 · {original['created_at']}\n\n以下为当时原回答，未重新核验，不代表当前状态。\n\n" + (snapshot.get('result') or '本轮没有回答。'),
+            'evidence':snapshot.get('evidence') or [], 'degraded':bool(snapshot.get('degraded')),
+            'charts':[], 'query_result':None})
+        return
+    with task_sources.scope(run.get('allowed_sources')), clarification.scope(run.get('clarification_response')), product_boundary.scope(product), case_scope(turn.get('state', {}).get('case_ids'), turn.get('state', {}).get('conditions')):
         await _execute_task(thread_id, query, max_rounds)
 
 
@@ -363,6 +376,8 @@ async def submit_task(body: TaskRequest) -> dict:
     try:ensure_model_allowed()
     except PermissionError as exc:raise HTTPException(403,str(exc)) from exc
     thread_id = body.thread_id or uuid4().hex
+    if body.followup and (not body.thread_id or body.clarification_answer):
+        raise HTTPException(422, '追问须指定现有会话，不能同时提交执行澄清')
     _validate_thread(thread_id)
     if recycle_bin.entry(thread_id):
         raise HTTPException(410, '会话已移入回收站，请先恢复')
@@ -370,6 +385,7 @@ async def submit_task(body: TaskRequest) -> dict:
         raise HTTPException(400, "任务不能为空")
     if thread_id in _tasks or thread_id in _starting or thread_id in _uploading:
         raise HTTPException(409, "该会话已有运行中的任务或正在上传文件")
+    followup_prepared = None
     session_dir = path_utils.get_session_dir(thread_id)
     session_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -382,7 +398,30 @@ async def submit_task(body: TaskRequest) -> dict:
     # Awaiting review must not leave a starting reservation behind on cancel/conflict.
     _starting.add(thread_id)
     try:
-        rule_context = await rule_engine.resolve(execution_query,[s.model_dump() for s in body.skip_rule_versions])
+        if body.followup:
+            if previous_run is None:
+                raise HTTPException(404, '追问的会话不存在')
+            if body.followup.reference_turn_id and not conversation.get_turn(thread_id, body.followup.reference_turn_id):
+                raise HTTPException(404, '所引用轮次不属于当前会话')
+            if not set(task_sources.normalize(body.allowed_sources)) <= set(task_sources.normalize(previous_run.get('allowed_sources'))):
+                raise HTTPException(403, '追问不能扩大来源权限，请调整来源设置并单独重跑')
+            try:
+                followup_prepared = await conversation.prepare(previous_run, body.followup, allowed_sources=body.allowed_sources)
+            except (asyncio.TimeoutError, RuntimeError) as exc:
+                raise HTTPException(503, '追问解析暂不可用，请稍后重试；历史记录未改变') from exc
+            except ValueError as exc:
+                try:
+                    conversation.save_pending(previous_run, body.followup, str(exc))
+                except ValueError:
+                    raise HTTPException(409, '会话已更新，请刷新后重新提交追问') from exc
+                raise HTTPException(409, {'code':'conversation_clarification', 'message':str(exc)}) from exc
+            execution_query = followup_prepared['task']
+            if followup_prepared['kind'] == 'history':
+                historical_sources = followup_prepared['history_snapshot']['snapshot'].get('allowed_sources')
+                if not set(task_sources.normalize(historical_sources)) <= set(task_sources.normalize(body.allowed_sources)):
+                    raise HTTPException(403, '历史快照包含当前未允许的来源，无法在本轮读取')
+        rule_context = ({'applied':[], 'overridden':[], 'conflicts':[]} if followup_prepared and followup_prepared['kind']=='history'
+                        else await rule_engine.resolve(execution_query,[s.model_dump() for s in body.skip_rule_versions]))
         if rule_context['conflicts']:
             raise HTTPException(409, {'code':'rule_conflict','message':'长期规则需核对，可本次跳过冲突规则后继续。','rule_context':rule_context})
         prepared = storage.create_run(
@@ -391,6 +430,7 @@ async def submit_task(body: TaskRequest) -> dict:
             round_mode=body.round_mode,
             allowed_sources=body.allowed_sources,
             clarification_answer=body.clarification_answer,
+            conversation_prepared=followup_prepared, followup=body.followup,
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc))
@@ -414,12 +454,16 @@ async def submit_task(body: TaskRequest) -> dict:
                 request_contract(prepared['execution_query'], body.product_context))
         if rule_context.get('candidate_count'):
             await monitor.report(thread_id,'rules_context','已核对本次长期规则',rule_context)
+        if followup_prepared:
+            await monitor.report(thread_id, 'conversation_context', '已解析本轮任务与会话记忆', {
+                'turn_id':prepared['turn_id'], 'kind':followup_prepared['kind'], 'state':followup_prepared['state'],
+                'execution_query':prepared['execution_query']})
         task = asyncio.create_task(_run_task(thread_id, prepared['execution_query'], body.max_rounds))
         _tasks[thread_id] = task
         task.add_done_callback(lambda t, tid=thread_id: _finish_task(tid, t))
     finally:
         _starting.discard(thread_id)
-    return {"status": "started", "thread_id": thread_id, "applied_intent_id": prepared['applied_intent_id'], "started_at": prepared['started_at'], "execution_id":prepared['execution_id'], 'execution_query':prepared['execution_query'], "rule_context":rule_context, 'allowed_sources': task_sources.normalize(body.allowed_sources)}
+    return {"status": "started", "thread_id": thread_id, "turn_id":prepared['turn_id'], "applied_intent_id": prepared['applied_intent_id'], "started_at": prepared['started_at'], "execution_id":prepared['execution_id'], 'execution_query':prepared['execution_query'], "rule_context":rule_context, 'allowed_sources': task_sources.normalize(body.allowed_sources)}
 
 
 @app.post("/api/task/{thread_id}/cancel")

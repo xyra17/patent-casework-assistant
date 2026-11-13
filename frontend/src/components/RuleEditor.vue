@@ -2,7 +2,7 @@
   <el-dialog :model-value="visible" :title="draft?.id ? '编辑长期规则' : '确认长期规则'" width="min(720px, 94vw)" :close-on-click-modal="false" @update:model-value="emit('update:visible', $event)">
     <div class="rule-form" v-if="form">
       <p class="scope-notice">启用后用于匹配范围内的新任务；本次任务的明确要求优先。</p>
-      <p v-if="sourceThread" class="muted">来源会话：{{ sourceQuery || sourceThread.slice(0, 8) }} · 已保存修订 #{{ sourceRevision }}</p>
+      <p v-if="sourceThread" class="muted">来源会话：{{ sourceQuery || sourceThread.slice(0, 8) }} · {{ sourceTurn ? '已保存对话轮次' : `已保存修订 #${sourceRevision}` }}</p>
       <details v-if="sourceSnapshot"><summary>查看来源修订</summary><p class="source-copy">{{ sourceSnapshot }}</p></details>
       <el-form label-position="top" @submit.prevent>
         <el-form-item label="规则名称"><el-input v-model="form.title" maxlength="80" aria-label="规则名称" /></el-form-item>
@@ -50,7 +50,7 @@ import {computed, ref, watch} from 'vue'
 import {getRuleCatalog,saveLongTermRule,previewRuleBinding,draftRuleBinding} from '../api'
 import RuleFormulaNode from './RuleFormulaNode.vue'
 import {RULE_CATEGORIES, rulePayload,bindingPayload,formulaLabel} from '../ruleForms'
-const props=defineProps({visible:Boolean,draft:Object,sourceThread:String,sourceRevision:Number,sourceSnapshot:String,sourceQuery:String})
+const props=defineProps({visible:Boolean,draft:Object,sourceThread:String,sourceRevision:Number,sourceTurn:String,sourceSnapshot:String,sourceQuery:String})
 const emit=defineEmits(['update:visible','saved'])
 const aliases=ref(''),preview=ref(null),previewing=ref(false),drafting=ref(false)
 const form=ref(null),terms=ref(''),confirmed=ref(false),saving=ref(false),error=ref('')
@@ -88,7 +88,7 @@ async function save(){
     if(payload.binding){payload.binding=bindingPayload(payload.binding);preview.value=await previewRuleBinding(payload.binding)}
     const body={...payload,confirmed:true}
     if(form.value.id)body.expected_revision=form.value.revision
-    else if(props.sourceThread){body.source_thread_id=props.sourceThread;body.source_revision_id=props.sourceRevision}
+    else if(props.sourceThread){body.source_thread_id=props.sourceThread;if(props.sourceTurn)body.source_turn_id=props.sourceTurn;else body.source_revision_id=props.sourceRevision}
     const result=await saveLongTermRule(body,form.value.id)
     emit('saved',result);emit('update:visible',false)
   }catch(e){error.value=e.message}finally{saving.value=false}
