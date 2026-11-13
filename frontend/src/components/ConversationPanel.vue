@@ -74,6 +74,19 @@
         <section class="memory-section"><header><span class="memory-index">01</span><h3>工作上下文</h3><span class="inspector-tag">本次执行</span></header><p>工具查询、证据与校验反馈随本次执行保存。</p><div class="inspector-fact"><span>执行状态</span><strong>{{ statusLabel(data.memory.working.status,data.memory.working.degraded) }}</strong></div></section>
         <section class="memory-section"><header><span class="memory-index">02</span><h3>会话记忆</h3><span class="inspector-tag">本会话</span></header><p class="memory-goal">{{ data.memory.conversation.goal }}</p><dl v-if="Object.keys(data.memory.conversation.conditions || {}).length" class="condition-list"><template v-for="(value,key) in data.memory.conversation.conditions" :key="key"><dt>{{ conditionLabel(key) }}</dt><dd>{{ value }}</dd></template></dl><p v-else class="inspector-muted">没有附加筛选条件。</p><div class="case-scope"><span>案件范围</span><p v-if="data.memory.conversation.case_ids == null">按当前任务查询，未限定案号集合。</p><div v-else-if="data.memory.conversation.case_ids.length" class="case-chips"><span v-for="id in data.memory.conversation.case_ids" :key="id">{{ id }}</span></div><p v-else>已确认范围为空，不自动扩大查询。</p></div><p v-for="item in data.memory.conversation.unresolved" :key="item" class="inspector-warning">待核实：{{ item }}</p></section>
         <section class="memory-section"><header><span class="memory-index">03</span><h3>长期规则</h3><span class="inspector-tag">项目共享</span></header><p>只有经你确认的约定才会保存；当前任务要求优先。</p><article v-for="rule in data.memory.long_term.applied || []" :key="rule.id" class="memory-rule"><strong>{{ rule.title }} <span>v{{ rule.revision }}</span></strong><p>{{ rule.content }}</p></article><p v-if="!data.memory.long_term.applied?.length" class="inspector-muted">本轮没有采用长期规则。</p></section>
+        <section v-if="data.memory.cache" class="memory-section">
+          <header><span class="memory-index">04</span><h3>按需记忆</h3><span class="inspector-tag">本会话</span></header>
+          <p>当前目标与条件每次携带；旧记录按相关性调入，重复命中会升温，长期未用会降温。</p>
+          <dl class="condition-list"><template v-for="layer in ['hot','warm','cold']" :key="layer"><dt>{{ memoryLayerLabel(layer) }}</dt><dd>{{ data.memory.cache.stored[layer] }} 条记录</dd></template></dl>
+          <template v-if="data.memory.cache.last_load">
+            <p class="inspector-muted">最近一次追问的加载量 · Token 估算</p>
+            <dl class="condition-list"><template v-for="layer in ['hot','warm','cold']" :key="layer"><dt>{{ memoryLayerLabel(layer) }}</dt><dd>{{ data.memory.cache.last_load.tokens[layer] }} / {{ data.memory.cache.last_load.budget[layer] }}</dd></template></dl>
+            <div class="inspector-fact"><span>合计 / 上限</span><strong>{{ data.memory.cache.last_load.total_tokens }} / {{ data.memory.cache.last_load.budget.total }}</strong></div>
+            <article v-for="item in data.memory.cache.last_load.entries || []" :key="item.turn_id" class="memory-rule"><strong>第 {{ item.ordinal }} 轮 · {{ memoryLayerLabel(item.layer) }}</strong><p>{{ item.question }}</p><button type="button" class="quiet-button" @click="openMemoryTurn(item)">查看当时回答</button></article>
+            <p v-for="item in data.memory.cache.last_load.transitions || []" :key="item.turn_id" class="inspector-muted">第 {{ item.ordinal }} 轮：{{ memoryLayerLabel(item.from) }} → {{ memoryLayerLabel(item.to) }}</p>
+          </template>
+          <p v-else class="inspector-muted">继续追问后可查看本次加载量；浏览记录不会改变热度。</p>
+        </section>
       </template>
       <template v-else-if="selectedTurn && inspector === 'sources'">
         <p class="inspector-intro">第 {{ selectedTurn.ordinal }} 轮 · {{ selectedTurn.snapshot?.evidence?.length || 0 }} 个来源<br>编号、位置和版本均对应本轮回答。</p>
@@ -94,7 +107,7 @@ import {ElMessageBox} from 'element-plus'
 import {parseResultMarkdown} from '../resultMarkdown'
 import {ChatLineRound,Collection,Plus,Clock,ArrowDown,ArrowUp,Loading,Check,Warning,Link,Document,CopyDocument,MoreFilled,Close,RefreshRight} from '@element-plus/icons-vue'
 import DOMPurify from 'dompurify'
-import {getConversation,submitTask,draftTurnRule} from '../api'
+import {getConversation,getConversationTurn,submitTask,draftTurnRule} from '../api'
 import {toast} from '../store'
 import RuleEditor from './RuleEditor.vue'
 const props=defineProps({session:{type:Object,required:true},active:Boolean})
@@ -122,6 +135,16 @@ function historyNotice(turn){const match=(turn.snapshot?.result || '').match(sna
 const isLongAnswer=turn=>(turn.snapshot?.result || '').length>1500 || (turn.snapshot?.result || '').split('\n').length>22
 function toggleAnswer(id){const next=new Set(expandedAnswers.value);if(next.has(id))next.delete(id);else next.add(id);expandedAnswers.value=next}
 function inspectTurn(type,turn,source=''){selectedTurnId.value=turn.turn_id;highlightedSource.value=source;inspector.value=type}
+const memoryLayerLabel=value=>({hot:'热层',warm:'近期层',cold:'冷层'}[value] || value)
+async function openMemoryTurn(item){
+  const id=props.session.thread_id
+  try{
+    const turn=await getConversationTurn(id,item.turn_id)
+    if(id!==props.session.thread_id || !data.value)return
+    data.value.turns=[...new Map([...data.value.turns,turn].map(t=>[t.turn_id,t])).values()].sort((a,b)=>a.ordinal-b.ordinal)
+    inspector.value='';jumpTarget.value=turn.turn_id;await jumpToTurn(turn.turn_id)
+  }catch(e){toast('error',e.message || '历史轮次暂不可用')}
+}
 function onAnswerClick(event,turn){const button=event.target.closest('[data-source]');if(button){event.preventDefault();inspectTurn('sources',turn,button.dataset.source)}}
 async function copyTurn(turn){try{await navigator.clipboard.writeText(turn.snapshot.result);copiedTurn.value=turn.turn_id}catch{toast('error','复制失败，请选择文本手动复制')}}
 async function jumpToTurn(id){await nextTick();const node=scroll.value?.querySelector(`[data-turn-id="${id}"]`);if(node)scroll.value.scrollTop+=node.getBoundingClientRect().top-scroll.value.getBoundingClientRect().top-12}
@@ -135,7 +158,7 @@ async function load(more=false){
   try{
     const next=await getConversation(id,more?data.value?.next_before:null)
     if(token!==generation || id!==props.session.thread_id)return
-    if(more)next.turns=[...next.turns,...data.value.turns]
+    if(more)next.turns=[...new Map([...next.turns,...data.value.turns].map(t=>[t.turn_id,t])).values()].sort((a,b)=>a.ordinal-b.ordinal)
     const changed=data.value?.current_turn_id!==next.current_turn_id
     data.value=next;loadFailed.value=false
     if(changed && !more){jumpTarget.value=next.current_turn_id;await jumpToTurn(next.current_turn_id)}

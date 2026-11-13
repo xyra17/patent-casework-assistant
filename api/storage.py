@@ -128,6 +128,8 @@ def init_db() -> None:
             );
             """
         )
+        from api.memory_cache import schema
+        schema(conn)
 
         conn.execute('INSERT OR IGNORE INTO history_sequence(thread_id) SELECT thread_id FROM runs ORDER BY rowid')
         columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
@@ -466,6 +468,8 @@ def get_run(thread_id: str) -> dict | None:
 
 def delete_run(thread_id: str) -> None:
     with _LOCK, _connect() as conn:
+        for table in ('conversation_memory_terms', 'conversation_memory', 'conversation_memory_loads'):
+            conn.execute(f'DELETE FROM {table} WHERE thread_id=?', (thread_id,))
         conn.execute('DELETE FROM conversation_turns WHERE thread_id=?', (thread_id,))
         conn.execute('DELETE FROM conversation_pending WHERE thread_id=?', (thread_id,))
         for table in ("evidence_records", "context_artifacts", "context_decisions", "intent_revisions", "execution_history", "history_sequence"):
