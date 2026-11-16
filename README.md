@@ -1,6 +1,6 @@
 # Patent Casework Assistant
 
-案件助手是面向专利代理部门的案件与文档工作台。通过自然语言查询案件信息、核对期限、回顾会议、检索参考材料和分析业务数据，在同一会话中继续追问，并从回答打开对应来源。
+Patent Casework Assistant 是面向专利代理部门的案件与文档工作台。通过自然语言查询案件信息、核对期限、回顾会议、检索参考材料和分析业务数据，在同一会话中继续追问，并从回答打开对应来源。
 
 项目以案件为线索，关联登记信息、会议记录、技术交底和申请正文，将资料查找、业务统计与文档整理放在同一工作区。附带模拟案件资料，便于本地运行和体验业务流程。
 
@@ -9,6 +9,16 @@
 ![扫描交底任务的结果、来源与执行过程](docs/images/scanned-disclosure-result-20261106.png)
 
 ![业务多轮对话与会话列表](docs/images/business-conversation.jpg)
+
+## 系统图解
+
+README 里保留一张静态预览，完整交互版通过 GitHub Pages 打开。点击图片或链接可以在五张图之间切换：系统架构、任务执行流程、资料入库与检索、多轮对话时序、结果核验与修正。
+
+[打开交互式系统图](https://xyra17.github.io/patent-casework-assistant/architecture/) · [查看图表源文件](docs/architecture/)
+
+[![Patent Casework Assistant system architecture](docs/architecture/overview.png)](https://xyra17.github.io/patent-casework-assistant/architecture/)
+
+图表说明和 JSON 源文件位于 [`docs/architecture/`](docs/architecture/)。GitHub Actions 会在 `main` 分支更新后发布 `docs/` 目录。
 
 ## 业务场景
 

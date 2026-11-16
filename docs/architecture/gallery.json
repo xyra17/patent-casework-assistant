@@ -1,0 +1,40 @@
+{
+  "title": "Patent Casework Assistant",
+  "diagrams": [
+    {
+      "id": "architecture",
+      "title": "系统架构图",
+      "status": "ready",
+      "description": "前端、API、Agent、工具和存储之间的关系。",
+      "source": "system-architecture.json"
+    },
+    {
+      "id": "execution",
+      "title": "任务执行流程",
+      "status": "ready",
+      "description": "从提交问题到执行、核验和交付。",
+      "source": "task-execution.json"
+    },
+    {
+      "id": "retrieval",
+      "title": "资料入库与检索",
+      "status": "ready",
+      "description": "展示案件资料、公司资料和会话附件的保存、检索、证据登记与交付路径。",
+      "source": "retrieval.dataflow.json"
+    },
+    {
+      "id": "conversation",
+      "title": "多轮对话时序",
+      "status": "ready",
+      "description": "展示追问如何加载会话状态、执行检索、核验并返回结果。",
+      "source": "conversation.sequence.json"
+    },
+    {
+      "id": "verification",
+      "title": "结果核验与修正",
+      "status": "ready",
+      "description": "展示程序核验、证据核对、内容审查、补查修正和停止出口。",
+      "source": "verification.architecture.json"
+    }
+  ]
+}

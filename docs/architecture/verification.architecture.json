@@ -1,0 +1,279 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Patent Casework Assistant · 结果核验与修正",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1280,
+      760
+    ]
+  },
+  "components": [
+    {
+      "id": "candidate",
+      "type": "backend",
+      "label": "候选结果",
+      "sublabel": "答案 · 报告 · 图表",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "hard",
+      "type": "security",
+      "label": "程序硬校验",
+      "sublabel": "格式 · 来源 · 交付要求",
+      "pos": [
+        280,
+        300
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "evidence",
+      "type": "security",
+      "label": "证据核对",
+      "sublabel": "引用 · 范围 · 数字",
+      "pos": [
+        520,
+        300
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "content",
+      "type": "security",
+      "label": "内容审查",
+      "sublabel": "逐项判断与定位",
+      "pos": [
+        760,
+        300
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "pass",
+      "type": "backend",
+      "label": "形成可交付结果",
+      "sublabel": "通过当前检查",
+      "pos": [
+        1000,
+        300
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "deliver",
+      "type": "frontend",
+      "label": "交付答案与文件",
+      "sublabel": "来源 · 状态 · 下载",
+      "pos": [
+        1000,
+        520
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "gap",
+      "type": "security",
+      "label": "发现具体缺口",
+      "sublabel": "补查或补充条件",
+      "pos": [
+        520,
+        520
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "repair",
+      "type": "backend",
+      "label": "复用证据并修正",
+      "sublabel": "只补查当前缺口",
+      "pos": [
+        760,
+        520
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "recheck",
+      "type": "security",
+      "label": "重新核验",
+      "sublabel": "检查修正后的结果",
+      "pos": [
+        1000,
+        660
+      ],
+      "size": [
+        180,
+        82
+      ]
+    },
+    {
+      "id": "stop",
+      "type": "security",
+      "label": "说明未完成部分",
+      "sublabel": "预算 · 进展 · 审查",
+      "pos": [
+        760,
+        660
+      ],
+      "size": [
+        180,
+        82
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "candidate-hard",
+      "from": "candidate",
+      "to": "hard",
+      "label": "开始核验",
+      "variant": "emphasis"
+    },
+    {
+      "id": "hard-evidence",
+      "from": "hard",
+      "to": "evidence",
+      "label": "通过硬校验"
+    },
+    {
+      "id": "evidence-content",
+      "from": "evidence",
+      "to": "content",
+      "label": "证据可见"
+    },
+    {
+      "id": "content-pass",
+      "from": "content",
+      "to": "pass",
+      "label": "检查通过",
+      "variant": "emphasis"
+    },
+    {
+      "id": "pass-deliver",
+      "from": "pass",
+      "to": "deliver",
+      "label": "交付",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "hard-gap",
+      "from": "hard",
+      "to": "gap",
+      "label": "缺少必要条件",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "security"
+    },
+    {
+      "id": "evidence-gap",
+      "from": "evidence",
+      "to": "gap",
+      "label": "证据不足",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "security",
+      "labelDy": 24
+    },
+    {
+      "id": "content-gap",
+      "from": "content",
+      "to": "gap",
+      "label": "需要修正",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "security"
+    },
+    {
+      "id": "gap-repair",
+      "from": "gap",
+      "to": "repair",
+      "label": "定位缺口"
+    },
+    {
+      "id": "repair-recheck",
+      "from": "repair",
+      "to": "recheck",
+      "label": "带缺口重跑",
+      "fromSide": "right",
+      "toSide": "left",
+      "variant": "dashed",
+      "labelDy": 24,
+      "labelDx": -60
+    },
+    {
+      "id": "recheck-content",
+      "from": "recheck",
+      "to": "content",
+      "label": "再次检查",
+      "variant": "dashed"
+    },
+    {
+      "id": "gap-stop",
+      "from": "gap",
+      "to": "stop",
+      "label": "无法继续",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "核验先确认可交付性",
+      "items": [
+        "程序先检查格式、来源范围和交付要求，再核对答案中的证据与数字。",
+        "内容审查逐项定位判断依据，检查通过后交付答案和文件。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "修正围绕具体缺口展开",
+      "items": [
+        "发现问题后复用已取得的证据，只补查当前缺口，再次检查修正后的结果。",
+        "补充条件、预算、进展和审查状态决定这轮是否继续。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "每个出口都有说明",
+      "items": [
+        "通过检查的结果进入交付，待确认或缺少证据的结果保留当前状态。",
+        "达到停止条件时说明已核实内容和待处理事项，不把未完成内容写成通过。"
+      ]
+    }
+  ]
+}

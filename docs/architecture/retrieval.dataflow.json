@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Patent Casework Assistant · 资料入库与检索",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      620
+    ]
+  },
+  "stages": [
+    {
+      "label": "来源"
+    },
+    {
+      "label": "解析与同步"
+    },
+    {
+      "label": "索引与存储"
+    },
+    {
+      "label": "查询"
+    },
+    {
+      "label": "证据与交付"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "case-source",
+      "type": "external",
+      "label": "案件资料目录",
+      "sublabel": "原件 · 版本",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "company-source",
+      "type": "external",
+      "label": "公司知识资料",
+      "sublabel": "制度 · 手册 · 流程",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "attachment-source",
+      "type": "frontend",
+      "label": "会话附件",
+      "sublabel": "当前任务输入",
+      "stage": 0,
+      "row": 3
+    },
+    {
+      "id": "case-sync",
+      "type": "backend",
+      "label": "案件同步与解析",
+      "sublabel": "扫描 · 解析 · 发布",
+      "stage": 1,
+      "row": 0
+    },
+    {
+      "id": "knowledge-build",
+      "type": "backend",
+      "label": "知识库构建",
+      "sublabel": "切块 · 嵌入 · 发布",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "attachment-read",
+      "type": "backend",
+      "label": "附件读取",
+      "sublabel": "按任务显式读取",
+      "stage": 1,
+      "row": 3
+    },
+    {
+      "id": "case-store",
+      "type": "database",
+      "label": "案件 SQLite",
+      "sublabel": "字段 · 正文 · 版本",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "knowledge-index",
+      "type": "database",
+      "label": "Chroma + BM25",
+      "sublabel": "同一发布版本",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "execution-work",
+      "type": "database",
+      "label": "执行工作区",
+      "sublabel": "附件 · 报告 · PDF",
+      "stage": 2,
+      "row": 3
+    },
+    {
+      "id": "query-tools",
+      "type": "backend",
+      "label": "查询与检索工具",
+      "sublabel": "字段 · 混合召回 · 回读",
+      "stage": 3,
+      "row": 1
+    },
+    {
+      "id": "evidence",
+      "type": "security",
+      "label": "证据登记",
+      "sublabel": "来源 · 版本 · 定位",
+      "stage": 4,
+      "row": 1
+    },
+    {
+      "id": "delivery",
+      "type": "frontend",
+      "label": "答案与文件交付",
+      "sublabel": "引用 · 报告 · 下载",
+      "stage": 4,
+      "row": 3
+    }
+  ],
+  "flows": [
+    {
+      "id": "case-ingest",
+      "from": "case-source",
+      "to": "case-sync",
+      "label": "原件与版本",
+      "classification": "案件资料",
+      "variant": "emphasis"
+    },
+    {
+      "id": "company-ingest",
+      "from": "company-source",
+      "to": "knowledge-build",
+      "label": "文档内容",
+      "classification": "公司资料",
+      "variant": "emphasis"
+    },
+    {
+      "id": "attachment-ingest",
+      "from": "attachment-source",
+      "to": "attachment-read",
+      "label": "任务输入",
+      "classification": "会话范围",
+      "variant": "default"
+    },
+    {
+      "id": "case-publish",
+      "from": "case-sync",
+      "to": "case-store",
+      "label": "已发布解析",
+      "classification": "版本化",
+      "variant": "emphasis"
+    },
+    {
+      "id": "knowledge-publish",
+      "from": "knowledge-build",
+      "to": "knowledge-index",
+      "label": "已发布索引",
+      "classification": "向量 + 词法",
+      "variant": "emphasis"
+    },
+    {
+      "id": "work-publish",
+      "from": "attachment-read",
+      "to": "execution-work",
+      "label": "读取与生成",
+      "classification": "执行范围",
+      "variant": "default"
+    },
+    {
+      "id": "case-query",
+      "from": "case-store",
+      "to": "query-tools",
+      "label": "字段/正文查询",
+      "classification": "案件检索",
+      "variant": "default"
+    },
+    {
+      "id": "knowledge-query",
+      "from": "knowledge-index",
+      "to": "query-tools",
+      "label": "混合召回",
+      "classification": "知识检索",
+      "variant": "default",
+      "labelDx": -45
+    },
+    {
+      "id": "attachment-query",
+      "from": "execution-work",
+      "to": "query-tools",
+      "label": "显式读取",
+      "classification": "附件查询",
+      "variant": "dashed",
+      "labelDx": 55
+    },
+    {
+      "id": "query-evidence",
+      "from": "query-tools",
+      "to": "evidence",
+      "label": "登记来源定位",
+      "classification": "证据",
+      "variant": "security"
+    },
+    {
+      "id": "work-delivery",
+      "from": "execution-work",
+      "to": "delivery",
+      "label": "报告与文件",
+      "classification": "交付物",
+      "variant": "dashed",
+      "route": "straight"
+    },
+    {
+      "id": "evidence-delivery",
+      "from": "evidence",
+      "to": "delivery",
+      "label": "引用与答案",
+      "classification": "可回查",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "三条资料路径",
+      "items": [
+        "案件资料、公司资料和会话附件各自进入对应的解析与存储路径。",
+        "案件库保存版本化解析结果，知识库保存同一发布版本的向量和关键词索引，附件停留在本次执行范围。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "查询结果如何留下依据",
+      "items": [
+        "查询工具从合适的库或工作区取得内容，并把来源、版本和定位登记为证据。",
+        "答案和文件沿证据路径交付，后续可以回到对应资料查看。"
+      ]
+    }
+  ]
+}

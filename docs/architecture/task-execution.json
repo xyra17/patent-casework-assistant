@@ -1,0 +1,326 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Patent Casework Assistant · 流程",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1385,
+      880
+    ],
+    "legend": {
+      "entries": {
+        "frontend": {
+          "label": "用户交互"
+        },
+        "backend": {
+          "label": "任务执行"
+        },
+        "security": {
+          "label": "判断与核验"
+        }
+      }
+    }
+  },
+  "components": [
+    {
+      "id": "submit",
+      "type": "frontend",
+      "label": "提交问题",
+      "sublabel": "问题 · 附件 · 来源",
+      "pos": [
+        20,
+        310
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "context",
+      "type": "backend",
+      "label": "理解本轮任务",
+      "sublabel": "追问上下文 · 规则",
+      "pos": [
+        255,
+        310
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "route",
+      "type": "security",
+      "label": "选择执行方式",
+      "sublabel": "核对任务条件与来源",
+      "pos": [
+        490,
+        310
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "fixed",
+      "type": "backend",
+      "label": "执行固定流程",
+      "sublabel": "查询 · 登记证据 · 生成结果",
+      "pos": [
+        725,
+        80
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "主 Agent 执行",
+      "sublabel": "规划 · 直调工具或委派",
+      "pos": [
+        490,
+        535
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "工具调用与证据",
+      "sublabel": "按证据组织候选答案",
+      "pos": [
+        725,
+        535
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "review",
+      "type": "security",
+      "label": "核对证据与内容",
+      "sublabel": "程序检查 · 内容审查",
+      "pos": [
+        960,
+        310
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "deliver",
+      "type": "frontend",
+      "label": "交付结果",
+      "sublabel": "答案 · 来源 · 文件",
+      "pos": [
+        1195,
+        310
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "clarify-input",
+      "type": "frontend",
+      "label": "等待补充问题",
+      "sublabel": "含义明确后重新提交",
+      "pos": [
+        255,
+        730
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "clarify-work",
+      "type": "frontend",
+      "label": "等待补充条件",
+      "sublabel": "保留已取得的内容",
+      "pos": [
+        725,
+        310
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "repair",
+      "type": "security",
+      "label": "能否继续修正",
+      "sublabel": "预算 · 进展 · 审查",
+      "pos": [
+        960,
+        730
+      ],
+      "size": [
+        170,
+        88
+      ]
+    },
+    {
+      "id": "stop",
+      "type": "security",
+      "label": "说明未完成部分",
+      "sublabel": "保留已核实的内容",
+      "pos": [
+        1195,
+        730
+      ],
+      "size": [
+        170,
+        88
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "submit-context",
+      "from": "submit",
+      "to": "context",
+      "label": "提交",
+      "variant": "emphasis"
+    },
+    {
+      "id": "context-route",
+      "from": "context",
+      "to": "route",
+      "label": "已明确",
+      "variant": "emphasis"
+    },
+    {
+      "id": "route-fixed",
+      "from": "route",
+      "to": "fixed",
+      "label": "条件满足",
+      "fromSide": "top",
+      "toSide": "left",
+      "variant": "emphasis"
+    },
+    {
+      "id": "fixed-review",
+      "from": "fixed",
+      "to": "review",
+      "label": "候选结果",
+      "fromSide": "right",
+      "toSide": "top",
+      "variant": "emphasis"
+    },
+    {
+      "id": "route-agent",
+      "from": "route",
+      "to": "agent",
+      "label": "其余任务",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 75
+    },
+    {
+      "id": "agent-tools",
+      "from": "agent",
+      "to": "tools",
+      "label": "按需调用"
+    },
+    {
+      "id": "tools-review",
+      "from": "tools",
+      "to": "review",
+      "label": "候选结果",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "labelDx": -36
+    },
+    {
+      "id": "review-deliver",
+      "from": "review",
+      "to": "deliver",
+      "label": "通过",
+      "variant": "emphasis"
+    },
+    {
+      "id": "context-clarify",
+      "from": "context",
+      "to": "clarify-input",
+      "label": "追问不明确",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "security",
+      "labelDy": 100
+    },
+    {
+      "id": "fixed-clarify",
+      "from": "fixed",
+      "to": "clarify-work",
+      "label": "关键条件缺失",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "security",
+      "labelDy": 85
+    },
+    {
+      "id": "tools-clarify",
+      "from": "tools",
+      "to": "clarify-work",
+      "label": "关键条件缺失",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "variant": "security"
+    },
+    {
+      "id": "review-repair",
+      "from": "review",
+      "to": "repair",
+      "label": "发现问题",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "variant": "security",
+      "labelDy": 205
+    },
+    {
+      "id": "repair-agent",
+      "from": "repair",
+      "to": "agent",
+      "label": "带缺口重跑",
+      "fromSide": "left",
+      "toSide": "bottom",
+      "variant": "dashed"
+    },
+    {
+      "id": "repair-stop",
+      "from": "repair",
+      "to": "stop",
+      "label": "无法继续",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "从提交到交付",
+      "items": [
+        "问题提交后，系统先整理追问上下文、来源范围和已确认规则，再选择固定流程或 Agent。符合执行条件的案件任务走固定流程；Agent 按需调用工具或委派专业子智能体，并依据证据组织答案。",
+        "追问含义或任务条件需要补充时，系统保留已有内容，等待用户补充。信息明确后，请求重新进入任务流程。",
+        "候选结果经过核验后交付。发现问题时，Agent 复用已有证据，针对缺口补查并再次核验。修正受预算、进展和审查状态约束；结束时说明已完成内容与待处理事项。"
+      ]
+    }
+  ]
+}

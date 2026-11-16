@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Patent Casework Assistant · 多轮对话时序",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1080,
+      590
+    ]
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "用户",
+      "sublabel": "继续追问"
+    },
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "工作台",
+      "sublabel": "会话与结果"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "任务 API",
+      "sublabel": "创建执行"
+    },
+    {
+      "id": "memory",
+      "type": "database",
+      "label": "会话记忆",
+      "sublabel": "轮次 · 状态"
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "主 Agent",
+      "sublabel": "规划与执行"
+    },
+    {
+      "id": "retrieval",
+      "type": "backend",
+      "label": "检索工具",
+      "sublabel": "案件 · 知识 · 附件"
+    },
+    {
+      "id": "review",
+      "type": "security",
+      "label": "结果核验",
+      "sublabel": "证据与内容"
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "运行记录",
+      "sublabel": "app.db · evidence"
+    }
+  ],
+  "segments": [
+    {
+      "from": 145,
+      "to": 265,
+      "label": "接收与记忆"
+    },
+    {
+      "from": 275,
+      "to": 400,
+      "label": "执行与取证"
+    },
+    {
+      "from": 415,
+      "to": 535,
+      "label": "核验与返回"
+    }
+  ],
+  "messages": [
+    {
+      "id": "user-followup",
+      "from": "user",
+      "to": "ui",
+      "y": 160,
+      "label": "继续追问",
+      "variant": "emphasis"
+    },
+    {
+      "id": "submit-followup",
+      "from": "ui",
+      "to": "api",
+      "y": 180,
+      "label": "POST /api/task",
+      "variant": "emphasis"
+    },
+    {
+      "id": "load-conversation",
+      "from": "api",
+      "to": "memory",
+      "y": 215,
+      "label": "读取上一轮状态",
+      "variant": "default"
+    },
+    {
+      "id": "memory-context",
+      "from": "memory",
+      "to": "api",
+      "y": 250,
+      "label": "上下文与引用轮次",
+      "variant": "return"
+    },
+    {
+      "id": "start-agent",
+      "from": "api",
+      "to": "agent",
+      "y": 280,
+      "label": "执行任务",
+      "variant": "emphasis"
+    },
+    {
+      "id": "prepare-query",
+      "from": "agent",
+      "to": "retrieval",
+      "y": 315,
+      "label": "按来源查询",
+      "variant": "default"
+    },
+    {
+      "id": "retrieval-evidence",
+      "from": "retrieval",
+      "to": "agent",
+      "y": 350,
+      "label": "返回内容与证据",
+      "variant": "return"
+    },
+    {
+      "id": "candidate-result",
+      "from": "agent",
+      "to": "review",
+      "y": 390,
+      "label": "候选答案",
+      "variant": "emphasis"
+    },
+    {
+      "id": "record-evidence",
+      "from": "review",
+      "to": "store",
+      "y": 420,
+      "label": "保存核验记录",
+      "variant": "dashed"
+    },
+    {
+      "id": "review-pass",
+      "from": "review",
+      "to": "api",
+      "y": 450,
+      "label": "通过或带缺口返回",
+      "variant": "return"
+    },
+    {
+      "id": "task-result",
+      "from": "api",
+      "to": "ui",
+      "y": 480,
+      "label": "进度与答案",
+      "variant": "emphasis"
+    },
+    {
+      "id": "show-result",
+      "from": "ui",
+      "to": "user",
+      "y": 500,
+      "label": "展示引用与文件",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "ui",
+      "from": 170,
+      "to": 525,
+      "type": "frontend"
+    },
+    {
+      "participant": "api",
+      "from": 175,
+      "to": 500,
+      "type": "backend"
+    },
+    {
+      "participant": "memory",
+      "from": 205,
+      "to": 270,
+      "type": "database"
+    },
+    {
+      "participant": "agent",
+      "from": 275,
+      "to": 405,
+      "type": "backend"
+    },
+    {
+      "participant": "retrieval",
+      "from": 305,
+      "to": 370,
+      "type": "backend"
+    },
+    {
+      "participant": "review",
+      "from": 390,
+      "to": 465,
+      "type": "security"
+    },
+    {
+      "participant": "store",
+      "from": 410,
+      "to": 445,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "追问如何接上上一轮",
+      "items": [
+        "API 先读取本会话的轮次、目标、条件和可引用对象，再准备本轮任务。",
+        "历史模式保留当时的答案与来源快照，继续追问则在允许的来源范围内重新查询。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "执行结果如何回到会话",
+      "items": [
+        "Agent 取得内容后交给结果核验，核验记录和证据写入运行记录。",
+        "API 将进度、答案、来源和文件交回工作台，下一轮继续使用已确认的会话状态。"
+      ]
+    }
+  ]
+}

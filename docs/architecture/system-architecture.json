@@ -1,0 +1,318 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Patent Casework Assistant",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1380,
+      820
+    ],
+    "legend": {
+      "entries": {
+        "frontend": {
+          "label": "用户交互"
+        },
+        "backend": {
+          "label": "业务执行"
+        },
+        "database": {
+          "label": "本地存储"
+        },
+        "security": {
+          "label": "质量校验"
+        },
+        "external": {
+          "label": "外部服务"
+        }
+      }
+    }
+  },
+  "components": [
+    {
+      "id": "workbench",
+      "type": "frontend",
+      "label": "任务工作台",
+      "sublabel": "Vue 3 · 任务与会话",
+      "pos": [
+        40,
+        260
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "任务 API",
+      "sublabel": "FastAPI · 后台执行",
+      "pos": [
+        315,
+        260
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "orchestrator",
+      "type": "backend",
+      "label": "任务路由与 Agent",
+      "sublabel": "固定流程 / DeepAgents",
+      "pos": [
+        590,
+        260
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "review",
+      "type": "security",
+      "label": "证据与内容校验",
+      "sublabel": "程序核验 · 审查 · 有限修正",
+      "pos": [
+        865,
+        260
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "delivery",
+      "type": "frontend",
+      "label": "结果与文件交付",
+      "sublabel": "WebSocket · 引用 · 下载",
+      "pos": [
+        1140,
+        260
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "会话与运行状态",
+      "sublabel": "app.db · 记忆 · 规则 · 证据",
+      "pos": [
+        315,
+        35
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "model",
+      "type": "external",
+      "label": "大模型服务",
+      "sublabel": "规划 · 主 / 子 Agent · 审查",
+      "pos": [
+        590,
+        35
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "工具与专业子智能体",
+      "sublabel": "案件 · 知识 · 网络 · 文件",
+      "pos": [
+        590,
+        465
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "cases",
+      "type": "database",
+      "label": "案件信息与原文",
+      "sublabel": "SQLite · 字段 / 向量 / BM25",
+      "pos": [
+        315,
+        650
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "knowledge",
+      "type": "database",
+      "label": "公司知识库",
+      "sublabel": "Chroma + BM25 · 版本过滤",
+      "pos": [
+        590,
+        650
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "web",
+      "type": "external",
+      "label": "外部网络检索",
+      "sublabel": "按来源授权查询公开资料",
+      "pos": [
+        865,
+        650
+      ],
+      "size": [
+        200,
+        88
+      ]
+    },
+    {
+      "id": "files",
+      "type": "database",
+      "label": "附件与执行工作区",
+      "sublabel": "会话上传 · Markdown / PDF",
+      "pos": [
+        1140,
+        465
+      ],
+      "size": [
+        200,
+        88
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "request",
+      "from": "workbench",
+      "to": "api",
+      "label": "提交",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dispatch",
+      "from": "api",
+      "to": "orchestrator",
+      "label": "执行",
+      "variant": "emphasis"
+    },
+    {
+      "id": "candidate",
+      "from": "orchestrator",
+      "to": "review",
+      "label": "候选结果",
+      "variant": "emphasis"
+    },
+    {
+      "id": "publish",
+      "from": "review",
+      "to": "delivery",
+      "label": "返回结果",
+      "variant": "emphasis"
+    },
+    {
+      "id": "conversation-state",
+      "from": "api",
+      "to": "state",
+      "label": "读写状态",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "inference",
+      "from": "orchestrator",
+      "to": "model",
+      "label": "模型调用",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "tool-calls",
+      "from": "orchestrator",
+      "to": "tools",
+      "label": "按需调用",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 85
+    },
+    {
+      "id": "case-evidence",
+      "from": "tools",
+      "to": "cases",
+      "label": "字段与原文",
+      "fromSide": "left",
+      "toSide": "top"
+    },
+    {
+      "id": "company-knowledge",
+      "from": "tools",
+      "to": "knowledge",
+      "label": "混合检索",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 85
+    },
+    {
+      "id": "public-web",
+      "from": "tools",
+      "to": "web",
+      "label": "网络查询",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "workspace-io",
+      "from": "tools",
+      "to": "files",
+      "label": "读写附件与报告",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "artifact-download",
+      "from": "delivery",
+      "to": "files",
+      "label": "下载交付物",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 85
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "任务处理与交付",
+      "items": [
+        "系统结合本轮问题、追问上下文、可用资料和已确认规则，选择固定流程或 Agent。简单查询直接调用工具，复杂任务按需委派。",
+        "工具取得的资料登记为证据，候选答案经过程序核验和适用的内容审查。API 推送进度、答案和来源，交付文件可下载。",
+        "会话轮次、执行记录、证据和确认规则保存在 app.db。补查与修正受预算、进展和审查状态约束，交付时说明已完成内容与待处理事项。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "资料存储与查找",
+      "items": [
+        "案件资料同步至独立的 SQLite 库，支持字段查询和正文检索；引用可回到相应的文件版本。",
+        "公司资料单独建立向量和关键词索引，由 Chroma 与词法侧文件保存。每次检索固定同一发布版本。",
+        "会话附件保留在会话与执行目录，按任务要求读取；报告写入本次执行目录。案件库和公司知识库通过各自的更新流程接纳长期资料。"
+      ]
+    }
+  ]
+}
