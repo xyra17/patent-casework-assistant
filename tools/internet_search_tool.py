@@ -42,8 +42,14 @@ def _result_excerpt(result, include_raw_content, focus=""):
                 raw_receipt.update(selection='body_prefix', truncated=start>0 or end<len(raw),
                                    source_spans=[{'start':start,'end':end}])
         parts.append(excerpt)
+    # A provider summary can rewrite wording and mathematical symbols. Never
+    # mix it into the literal page source when actual page text is available.
+    if raw_receipt is not None:
+        parts = [excerpt] if excerpt else []
     receipt={'focus':focus,'summary_selection':summary_receipt,'raw_selection':raw_receipt,
-             'focus_found':bool(summary_receipt.get('focus_found') or (raw_receipt or {}).get('focus_found')) if focus else None,
+             'content_kind':'provider_page_text' if raw else 'provider_search_excerpt',
+             'summary_included':not bool(raw_receipt),
+             'focus_found':bool((raw_receipt or summary_receipt).get('focus_found')) if focus else None,
              'received_raw_characters':len(raw),
              'scope':'仅本次取得的网页内容，不证明页面或全网不存在其他内容'}
     return '\n\n'.join(parts),receipt,raw
@@ -116,8 +122,9 @@ def internet_search(
             "web_excerpt": receipt,
         })
         prefix = f"[证据 {evidence_id}] " if evidence_id else ""
+        content_label = '供应商返回的网页正文' if receipt['content_kind']=='provider_page_text' else '检索摘要，尚未取得网页正文'
         selection_note = ('；本次返回内容中命中关注词' if receipt['focus_found'] else '；本次返回内容未命中关注词，不能据此断言页面不存在相关内容') if focus else ''
-        blocks.append(f"{prefix}[{i}] {title}\nURL: {url}\n取证范围：仅本次取得的网页文本{selection_note}。\n内容: {content}")
+        blocks.append(f"{prefix}[{i}] {title}\nURL: {url}\n取证范围：{content_label}{selection_note}。\n内容: {content}")
     return "\n\n".join(blocks)
 
 

@@ -35,6 +35,11 @@ def _attachment(name):
     return path
 
 
+def _version_stamp(path):
+    info = path.stat()
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def _cell(value):
     import pandas as pd
     if value is None or pd.isna(value):
@@ -158,6 +163,16 @@ def compare_uploaded_files(left_filename: str, right_filename: str, key_columns:
             raise ValueError('表格与文档不能直接按同一规则比较，请选择两表或两份文档')
         if document_mode and (key_columns or left_sheet or right_sheet):
             raise ValueError('文档比较不接受表格关联列或工作表参数')
+        from casework import read_cache
+        from api import telemetry
+        before = (_version_stamp(left), _version_stamp(right))
+        cache_key = 'attachment_comparison:' + hashlib.sha256(json.dumps(
+            [str(left), str(right), before, key_columns, left_sheet, right_sheet, offset, limit, include_unchanged],
+            ensure_ascii=False).encode()).hexdigest()
+        cached = read_cache.get(cache_key)
+        if cached is not None:
+            telemetry.record({'event':'tool_cache_hit','tool':'compare_uploaded_files','scope':'task_file_versioned'})
+            return cached
         changes, metadata = (_table_changes(left,right,key_columns,left_sheet,right_sheet) if table_mode
                              else _document_changes(left,right,include_unchanged))
         if offset > len(changes):
@@ -191,6 +206,10 @@ def compare_uploaded_files(left_filename: str, right_filename: str, key_columns:
                   'truncated':next_offset<len(changes),'next_offset':next_offset if next_offset<len(changes) else None,
                   'scope_note':'仅比较指定工作表的单元格值，不比较公式、格式或其他工作表' if table_mode
                   else '仅比较解析出的文字；不覆盖图片、版式或法律与技术等价性'}
-        return json.dumps(result,ensure_ascii=False)
+        if before != (_version_stamp(left), _version_stamp(right)):
+            raise ValueError('比较期间原件发生变化，请使用稳定版本重新比较')
+        raw = json.dumps(result,ensure_ascii=False)
+        read_cache.put(cache_key, raw)
+        return raw
     except (ValueError,TypeError,OSError,KeyError,BadZipFile,PdfReadError,PackageNotFoundError) as exc:
         return json.dumps({'status':'error','message':str(exc)},ensure_ascii=False)

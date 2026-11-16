@@ -101,6 +101,18 @@ class ExcerptChecks(unittest.TestCase):
         span=receipt['raw_selection']['source_spans'][0]
         self.assertEqual(raw[span['start']:span['end']],'# Abstract\nReadable body.')
 
+    def test_raw_page_text_never_blends_rewritten_summary_into_original_evidence(self):
+        from tools.internet_search_tool import _result_excerpt
+        text,receipt,_=_result_excerpt({'content':'HNSW always has perfect accuracy. 4d + x M 2 4',
+            'raw_content':'## HNSW\nM affects accuracy. Formula: 4*d + x * M * 2 * 4.'},True,'HNSW')
+        self.assertNotIn('perfect accuracy',text)
+        self.assertIn('4*d + x * M * 2 * 4',text)
+        self.assertFalse(receipt['summary_included'])
+        self.assertEqual(receipt['content_kind'],'provider_page_text')
+        text,receipt,_=_result_excerpt({'content':'HNSW summary'},False,'HNSW')
+        self.assertEqual(receipt['content_kind'],'provider_search_excerpt')
+        self.assertTrue(receipt['summary_included'])
+
     def test_search_focus_uses_raw_preserving_privacy_and_shared_budget(self):
         from tools import internet_search_tool as web
         from api import context, source_policy, task_sources
@@ -218,3 +230,38 @@ class PacketAPIIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code,200)
                 self.assertEqual(response.json()['result_assessment']['review_packet'],packet)
             evidence.clear('handoff-test')
+
+
+class PreparedComparisonReuse(unittest.TestCase):
+    def test_unchanged_files_and_same_evidence_reuse_the_program_result_without_rereading(self):
+        from api import context,evidence
+        from tools import attachment_compare as compare
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'attachments').mkdir()
+            (root/'attachments/old.md').write_text('标题\n保留七天\n检查租户\n')
+            (root/'attachments/new.md').write_text('标题\n撤权失效\n检查租户\n')
+            context.set_session('comparison-reuse',tmp)
+            try:
+                evidence.reset('comparison-reuse')
+                args={'left_filename':'old.md','right_filename':'new.md','include_unchanged':True,'limit':100}
+                with patch.object(compare,'_document_changes',wraps=compare._document_changes) as align:
+                    first=compare.compare_uploaded_files.invoke(args)
+                    self.assertEqual(json.loads(first)['status'],'compared')
+                    with patch.object(Path,'read_bytes',side_effect=AssertionError('unchanged file reread')):
+                        second=compare.compare_uploaded_files.invoke({**args,'left_filename':'attachments/old.md'})
+                    self.assertEqual(first,second)
+                    self.assertEqual(align.call_count,1)
+                    # A file version change invalidates the saved alignment.
+                    (root/'attachments/new.md').write_text('标题\n权限撤销后立即失效\n检查租户\n')
+                    changed=compare.compare_uploaded_files.invoke(args)
+                    self.assertNotEqual(first,changed)
+                    self.assertEqual(align.call_count,2)
+                    # Missing source identities cannot inherit a cached proof.
+                    evidence.reset('comparison-reuse')
+                    compare.compare_uploaded_files.invoke(args)
+                    self.assertEqual(align.call_count,3)
+                context.reset_session()
+                context.set_session('comparison-other',tmp)
+                self.assertFalse(context.task_read_cache()['entries'])
+            finally:
+                evidence.clear('comparison-reuse');context.reset_session()
