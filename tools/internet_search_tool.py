@@ -22,20 +22,36 @@ _WEB_SEARCH_LIMIT = int(os.getenv("WEB_SEARCH_LIMIT", "3"))
 _client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY", ""))
 
 
-def _result_text(result, include_raw_content):
-    """Keep the search summary and return exactly the text registered as evidence."""
-    summary=str(result.get('content') or '').strip()
-    raw=str(result.get('raw_content') or '').strip() if include_raw_content else ''
-    # Search providers can return PDF transport bytes or navigation before body.
-    # Neither is a replacement for the provider's readable search excerpt.
-    if raw.startswith('%PDF-') or ('endobj' in raw[:1500] and 'stream' in raw[:1500]):raw=''
-    if raw:
-        import re
-        body=re.search(r'(?im)^#{1,3}\s+(?:Abstract|Overview|Introduction|README|摘要|概述|介绍)|^Abstract\s*:',raw)
-        if body:raw=raw[body.start():]
-    parts=[summary[:2400]] if summary else []
-    if raw and raw!=summary:parts.append(raw[:3600])
-    return '\n\n'.join(parts)
+def _result_excerpt(result, include_raw_content, focus=""):
+    import re
+    from tools.web_excerpt import focus_excerpt
+    summary=str(result.get('content') or '')
+    raw=str(result.get('raw_content') or '') if include_raw_content else ''
+    if raw.lstrip().startswith('%PDF-') or ('endobj' in raw[:1500] and 'stream' in raw[:1500]):
+        raw=''
+    excerpt, summary_receipt=focus_excerpt(summary,focus,2400)
+    parts=[excerpt] if excerpt else []
+    raw_receipt=None
+    if raw and raw!=summary:
+        excerpt,raw_receipt=focus_excerpt(raw,focus)
+        if not focus:
+            body=re.search(r'(?im)^#{1,3}\s+(?:Abstract|Overview|Introduction|README|摘要|概述|介绍)|^Abstract\s*:',raw)
+            if body:
+                start,end=body.start(),min(len(raw),body.start()+3600)
+                excerpt=raw[start:end]
+                raw_receipt.update(selection='body_prefix', truncated=start>0 or end<len(raw),
+                                   source_spans=[{'start':start,'end':end}])
+        parts.append(excerpt)
+    receipt={'focus':focus,'summary_selection':summary_receipt,'raw_selection':raw_receipt,
+             'focus_found':bool(summary_receipt.get('focus_found') or (raw_receipt or {}).get('focus_found')) if focus else None,
+             'received_raw_characters':len(raw),
+             'scope':'仅本次取得的网页内容，不证明页面或全网不存在其他内容'}
+    return '\n\n'.join(parts),receipt,raw
+
+
+def _result_text(result, include_raw_content, focus=""):
+    """Return precisely the text registered as source evidence."""
+    return _result_excerpt(result,include_raw_content,focus)[0]
 
 
 @tool
@@ -44,8 +60,9 @@ def internet_search(
     max_results: int = 5,
     topic: Literal["general", "news", "finance"] = "general",
     include_raw_content: bool = False,
+    focus: str = "",
 ) -> str:
-    """从互联网检索公开信息，返回结构化检索结果。"""
+    """检索公开信息。focus填写用户要核对的具体术语，按原文选取相关段落；指定页面或技术说明应使用focus，避免只读页首。未命中只表示本次片段不足。"""
     denial = source_policy.source_denial("web_search")
     if denial:
         return denial
@@ -61,6 +78,9 @@ def internet_search(
             f"本轮网络检索已达到上限（{_WEB_SEARCH_LIMIT} 次），"
             "请停止检索并基于已有结果回答。"
         )
+    import re, hashlib
+    focus = focus.strip()[:200] or " ".join(re.findall(r"\b[A-Z][A-Z0-9_-]{2,}\b",query))
+    include_raw_content = include_raw_content or bool(focus)
     try:
         response = _client.search(
             query=query,
@@ -81,16 +101,23 @@ def internet_search(
     for i, r in enumerate(results, 1):
         title = r.get("title", "")
         url = r.get("url", "")
-        content = _result_text(r, include_raw_content)
+        content,receipt,raw = _result_excerpt(r,include_raw_content,focus)
+        if raw and thread_id and len(raw)<=1_000_000:
+            from api import storage
+            ref=hashlib.sha256(raw.encode()).hexdigest()
+            storage.save_context_artifact(thread_id,ref,raw)
+            receipt['received_content_ref']=ref
         evidence_id = evidence.add(thread_id, {
             "type": "web",
             "title": title or f"网页结果 {i}",
             "url": url,
             "query": query,
             "snippet": content,
+            "web_excerpt": receipt,
         })
         prefix = f"[证据 {evidence_id}] " if evidence_id else ""
-        blocks.append(f"{prefix}[{i}] {title}\nURL: {url}\n内容: {content}")
+        selection_note = ('；本次返回内容中命中关注词' if receipt['focus_found'] else '；本次返回内容未命中关注词，不能据此断言页面不存在相关内容') if focus else ''
+        blocks.append(f"{prefix}[{i}] {title}\nURL: {url}\n取证范围：仅本次取得的网页文本{selection_note}。\n内容: {content}")
     return "\n\n".join(blocks)
 
 

@@ -55,12 +55,12 @@
               </tbody></table>
             </div>
           </section>
-          <section v-if="boundary?.professional_judgments.length" aria-label="专业判断待确认">
+          <section v-if="boundary?.professional_judgments.length && !reviewPacket" aria-label="专业判断待确认">
             <h3>待人工确认的具体判断</h3>
             <ul><li v-for="item in boundary.professional_judgments" :key="item.judgment">{{ item.judgment }}：待人工确认。{{ item.reason }}</li></ul>
             <p>未记录人工审核身份及确认结果。</p>
           </section>
-          <section v-if="boundary?.sources.length" aria-label="原文与候选依据">
+          <section v-if="boundary?.sources.length && !reviewPacket" aria-label="原文与候选依据">
             <h3>{{ boundary.profile === 'disclosure-search' ? '检索候选与原文依据（检索排序不代表专业结论）' : '原文依据' }}</h3>
             <article v-for="source in boundary.sources" :key="source.id">
               <strong>[{{ source.id }}] {{ source.case_id }} {{ source.title }}</strong>
@@ -71,6 +71,7 @@
           </section>
           <h3 v-if="boundary">{{ boundary.candidateLabel }}</h3>
           <div v-if="answerContent" class="md-body answer-body" v-html="renderContent(answerContent)" @click="onMarkdownClick"></div>
+          <AssistanceHandoff v-if="reviewPacket" :packet="reviewPacket" @show-evidence="emit('show-evidence',$event)" />
           <div v-if="session.query_result?.knowledge_applicability?.length" class="answer-version-notes">
             <p v-for="check in session.query_result.knowledge_applicability" :key="check.evidence_id">
               {{ check.evidence_id }} · {{ check.version?.version_label || '版本未命名' }} · {{ {current:'现行查询',history:'历史查询',compare:'版本对比（不表示现行有效）'}[check.purpose] }} · 适用日期 {{ check.as_of }}
@@ -155,10 +156,12 @@ import ConversationPanel from './ConversationPanel.vue'
 import { selectCurrentPdf,executionResultContent } from '../previewState'
 import { sessionOutputFiles } from '../sessionFiles'
 import { qualitySummaryText } from '../reflection'
-import { productBoundaryView } from '../resultAssessment'
+import { productBoundaryView, reviewPacketView } from '../resultAssessment'
+import AssistanceHandoff from './AssistanceHandoff.vue'
 
 const props = defineProps({ session: Object, executionExpanded: Boolean })
 const boundary = computed(() => productBoundaryView(props.session))
+const reviewPacket = computed(() => reviewPacketView(props.session))
 const emit = defineEmits(['rerun', 'refresh', 'show-evidence', 'clarify', 'show-files', 'toggle-execution', 'conversation-active', 'new-task'])
 const activeTab = ref('answer')
 watch(activeTab, value => emit('conversation-active',value === 'conversation'),{immediate:true})

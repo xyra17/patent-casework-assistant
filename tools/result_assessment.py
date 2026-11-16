@@ -80,7 +80,8 @@ def assess_result(run: dict) -> dict:
             axis.update(status='unverified', checks=[], detail='最终交付尚未形成，未作分项结论。')
     from tools.product_boundary import assessment
     product = assessment(run, review, facts, completeness, {'status':state})
-    return {'schema_version': 2, 'product_boundary':product, 'report_sha256': digest,
+    from tools.assistance_handoff import for_run
+    return {'schema_version': 2, 'product_boundary':product, 'review_packet':for_run(run), 'report_sha256': digest,
             'facts': facts, 'completeness': completeness,
             'delivery': {'status': state, 'label': label,
                          'stop_reason': summary.get('stop_reason') or run.get('stop_reason') or '',

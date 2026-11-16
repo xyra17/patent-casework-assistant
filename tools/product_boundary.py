@@ -41,7 +41,10 @@ def request_contract(query, product):
         'disclosure-search':(r'机制|最相近|最接近|借鉴|替代|技术影响|相似', ['技术机制的实质关系', '专业意义的最相近方案、可借鉴性及技术影响']),
     }
     pattern,labels=tests.get(value['profile'], ('(?!)', []))
-    if re.search(pattern, query):
+    from casework.routing import affirmative
+    requested = affirmative(query)
+    requested = '；'.join(c for c in requested.split('；') if not re.match(r'\s*(?:不作|不做|不构成|不判断)', c))
+    if re.search(pattern, requested):
         judgments=labels
     from tools.chart_utils import task_needs_charts
     return {**value,'chart_required':task_needs_charts(query),'version':VERSION,'query_sha256':hashlib.sha256(query.encode()).hexdigest(),

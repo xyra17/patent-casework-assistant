@@ -49,8 +49,12 @@ def quote_options(item, limit=6):
     # in-word periods remain in the source sentence. Every slice is literal.
     # PDF line wrapping can split a word or mechanism across a single newline.
     # Keep those wraps inside the literal sentence exposed to the selector.
-    boundaries = [0] + [m.end() for m in re.finditer(r'[。！？]|\n\s*\n|[.!?](?=\s+[A-Z]|$)',text)]
-    if boundaries[-1] != len(text):boundaries.append(len(text))
+    boundaries = {0, len(text)}
+    boundaries.update(m.end() for m in re.finditer(r'[。！？]|\n\s*\n|[.!?](?=\s+[A-Z]|$)',text))
+    # Markdown headings are separate source units, never glued to the next sentence.
+    for heading in re.finditer(r'(?m)^#{1,6}[^\S\n]+[^\n]+', text):
+        boundaries.update((heading.start(), heading.end()))
+    boundaries = sorted(boundaries)
     for start,end in zip(boundaries,boundaries[1:]):
         while start < end and text[start].isspace():
             start += 1
@@ -549,17 +553,40 @@ def render_answer(report, items, query='', *, quotes_only=False):
             report = body
             audit.append({'kind':'monthly_structured_delivery','evidence_id':selected['id'],
                           'replaced_freeform':True,'basis':'same_scope_verified_metrics_and_actual_event_rows'})
-    # A model may copy the text beside its quote selector. Expansion must not
-    # duplicate that same bound quotation in the user-facing answer.
-    from tools.evidence_refs import _quote_supported
-    pattern = re.compile(r'(?P<quote>“(?P<text>[^”\n]{12,})”)\s*(?P=quote)(?P<refs>(?:\s*\[S[1-9]\d*\])+)' )
-    def collapse(match):
-        refs = re.findall(r'\[(S\d+)\]', match['refs'])
-        if not any(item.get('id') in refs and _quote_supported(match['text'], item.get('snippet', '')) for item in items):
-            return match[0]
-        audit.append({'kind': 'duplicate_bound_quote', 'evidence_ids': list(dict.fromkeys(refs))})
-        return match['quote'] + ''.join('[' + sid + ']' for sid in dict.fromkeys(refs))
-    report = pattern.sub(collapse, report)
+    try:
+        json.loads(report)
+        structured_json = True
+    except (ValueError, TypeError):
+        structured_json = False
+    if not structured_json:
+        # A model may copy the text beside its quote selector. Expansion must not
+        # duplicate that same bound quotation in the user-facing answer.
+        from tools.evidence_refs import _quote_supported
+        pattern = re.compile(r'(?P<quote>“(?P<text>[^”\n]{12,})”)\s*(?P=quote)(?P<refs>(?:\s*\[S[1-9]\d*\])+)' )
+        def collapse(match):
+            refs = re.findall(r'\[(S\d+)\]', match['refs'])
+            if not any(item.get('id') in refs and _quote_supported(match['text'], item.get('snippet', '')) for item in items):
+                return match[0]
+            audit.append({'kind': 'duplicate_bound_quote', 'evidence_ids': list(dict.fromkeys(refs))})
+            return match['quote'] + ''.join('[' + sid + ']' for sid in dict.fromkeys(refs))
+        report = pattern.sub(collapse, report)
+        # A copied narrow quote followed by a larger selector expansion is also
+        # redundant, but only when one and the same cited source proves both.
+        pairs = re.compile(r'“(?P<a>[^”\n]+)”\s*“(?P<b>[^”\n]+)”(?P<refs>(?:\s*\[S[1-9]\d*\])+)')
+        def collapse_overlap(match):
+            refs = re.findall(r'\[(S\d+)\]', match['refs'])
+            from tools.evidence_refs import _literal
+            a, b = _literal(match['a']), _literal(match['b'])
+            if not a or not b or not (a in b or b in a):
+                return match[0]
+            if not any(item.get('id') in refs and _quote_supported(match['a'], item.get('snippet',''))
+                       and _quote_supported(match['b'], item.get('snippet','')) for item in items):
+                return match[0]
+            audit.append({'kind':'duplicate_bound_quote','evidence_ids':list(dict.fromkeys(refs))})
+            original = match['b'] if a in b else match['a']
+            return '“'+original+'”'+''.join('['+sid+']' for sid in dict.fromkeys(refs))
+        report = pairs.sub(collapse_overlap, report)
+        report = re.sub(r'(\[S[1-9]\d*\])(?:[ \t]*\1)+', r'\1', report)
     from tools.source_delivery import append_requested_provenance
     report, location_audit = append_requested_provenance(query, report, items)
     audit.extend(location_audit)

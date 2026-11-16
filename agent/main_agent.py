@@ -804,7 +804,9 @@ async def soft_review(result: dict) -> str | None:
             resp = await asyncio.wait_for(reviewer.ainvoke(messages), timeout=timeout)
         except Exception as exc:
             logger.warning("分项审查调用未完成：%s", type(exc).__name__)
-            result['soft_review_detail']='内容审查服务调用失败或超时，本轮未完成审查。'
+            from tools.content_verification import review_failure
+            result['review_failure'] = review_failure(exc)
+            result['soft_review_detail'] = result['review_failure']['detail']
             break
         try:
             parsed_review=parse_review_response(resp,review_schema)
@@ -1324,6 +1326,7 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         # 4.3 软校验（提示词驱动）
         soft_issue = None
         result.pop('soft_review_detail', None)
+        result.pop('review_failure', None)
         result['soft_review_status'] = 'not_run'
         result['verification'] = {'schema_version': 1, 'mode': 'structured_content',
                                   'status': 'not_run', 'checks': [], 'detail': '程序硬校验未通过，尚未执行内容审查。'}
@@ -1353,6 +1356,7 @@ async def _run_session(query: str, thread_id: str, session_dir: Path, max_rounds
         await monitor.report(thread_id, "reflection", "本轮质量校验完成", {
             "round": round_num, "max_rounds": max_rounds, "hard_issues": hard_issues, "soft_issue": soft_issue,
             "soft_review_status": result['soft_review_status'],
+            "review_failure": result.get('review_failure'),
             "verification": result.get('verification'),
             "case_selection_review": result.get('case_selection_review'),
             "case_selection_verification": result.get('case_selection_verification'),

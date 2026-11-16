@@ -39,3 +39,14 @@ export function productBoundaryView(session) {
       && boundary.objective_comparison?.status === 'VERIFIED',
   }
 }
+
+// A handoff packet is a separate, source-bound reading aid, never a verdict.
+export function reviewPacketView(session) {
+  const assessment=session?.result_assessment
+  const packet=assessment?.review_packet
+  return packet?.schema_version===1 && typeof packet.delivered_report_sha256==='string'
+    && packet.delivered_report_sha256.length>0 && packet.delivered_report_sha256===assessment.report_sha256
+    && packet.human_confirmation===null && packet.acceptance_changed===false
+    && ['sources','manual_checks','objective_issues','diagnoses'].every(key=>Array.isArray(packet[key]))
+    && typeof packet.model_draft?.text==='string' ? packet : null
+}

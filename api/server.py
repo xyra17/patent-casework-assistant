@@ -314,6 +314,11 @@ async def _execute_task(thread_id: str, query: str, max_rounds: int = 3) -> None
                     item["chart"]["evidenceId"] = item.get("id")
         direct_result = await build_query_result(query, result, evidence_items, degraded,
             business_review=business_review_from_run(storage.get_run(thread_id) or {}))
+        from tools.assistance_handoff import build_packet
+        handoff = build_packet(storage.get_run(thread_id) or {}, result, evidence_items,
+            lambda ref: storage.load_context_artifact(thread_id, ref))
+        if handoff:
+            await monitor.report(thread_id, 'analysis_handoff', '已整理证据与待核对的模型判断', handoff)
         from tools.result_assessment import assess_result
         result_assessment = assess_result({**(storage.get_run(thread_id) or {}),
             'status': 'completed', 'result': result, 'degraded': degraded, 'evidence': evidence_items, 'charts': build_chart_items(evidence_items, query)})

@@ -23,6 +23,8 @@ def hard_check(result: dict) -> list[str]:
     """
     report = result.get("report", "")
     issues: list[str] = []
+    from tools.answer_quality import answer_issues
+    issues.extend(answer_issues(result.get('query', ''), report, result.get('evidence', [])))
     from casework.archive_readback import final_check
     archive_check=final_check(result.get('query',''),result.get('evidence',[]),report)
     result['archive_evidence_check']=archive_check

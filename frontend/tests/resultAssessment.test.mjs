@@ -39,3 +39,21 @@ test('text comparison and professional judgment are separate sections',()=>{
   assert.equal(view.professional_judgments.length,1)
   assert.match(view.candidateLabel,/初步分析/)
 })
+
+import {reviewPacketView} from '../src/resultAssessment.js'
+test('human review packet is hidden on stale answer and never changes business verdict',()=>{
+  const session={result_assessment:{report_sha256:'x',product_boundary:{report_sha256:'x',status:'INCOMPLETE',issues:[]},
+    review_packet:{schema_version:1,delivered_report_sha256:'x',human_confirmation:null,acceptance_changed:false,
+      sources:[],manual_checks:[],objective_issues:[],diagnoses:[],model_draft:{text:'未确认草稿'}}}}
+  assert.ok(reviewPacketView(session))
+  assert.equal(productBoundaryView(session).label,'未完成')
+  session.result_assessment.review_packet.delivered_report_sha256='other'
+  assert.equal(reviewPacketView(session),null)
+  session.result_assessment.review_packet.delivered_report_sha256='x'
+  session.result_assessment.review_packet.human_confirmation={name:'fake'}
+  assert.equal(reviewPacketView(session),null)
+})
+
+test('malformed review packet cannot render as a valid packet',()=>{
+  assert.equal(reviewPacketView({result_assessment:{review_packet:{schema_version:1,acceptance_changed:false}}}),null)
+})
