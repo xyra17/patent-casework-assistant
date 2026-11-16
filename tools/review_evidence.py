@@ -78,7 +78,7 @@ def pack_review_evidence(items, report, budget=20000):
         pending_cited = max(1, len(cited) - position)
         quota = remaining // pending_cited if position < len(cited) else remaining
         if quota < 120: break
-        keys = ('id', 'type', 'title', 'case_id', 'owner_name', 'source', 'file_id', 'current_snapshot', 'location', 'revision', 'applicability',
+        keys = ('id', 'type', 'title', 'case_id', 'owner_name', 'source', 'file_id', 'current_snapshot', 'location', 'revision', 'applicability', 'web_excerpt',
                 'comparison_scope','comparison_counts','comparison_locations','review_projection', 'content', 'content_complete', 'snippet', 'sql', 'params', 'columns', 'rows', 'completeness', 'rule_versions','answer_contract')
         compact = {key: item[key] for key in keys if item.get(key) is not None}
         if compact.get('content_complete') and compact.get('content'):compact.pop('snippet',None)

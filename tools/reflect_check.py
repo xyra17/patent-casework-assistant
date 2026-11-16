@@ -25,6 +25,8 @@ def hard_check(result: dict) -> list[str]:
     issues: list[str] = []
     from tools.answer_quality import answer_issues
     issues.extend(answer_issues(result.get('query', ''), report, result.get('evidence', [])))
+    from tools.evidence_coverage import acquired_content_issues
+    issues.extend(acquired_content_issues(report, result.get('evidence', [])))
     from casework.archive_readback import final_check
     archive_check=final_check(result.get('query',''),result.get('evidence',[]),report)
     result['archive_evidence_check']=archive_check
@@ -152,20 +154,8 @@ def hard_check(result: dict) -> list[str]:
         if not has_raw_score_boundary:
             issues.append('RRF机制边界未说明：须明确不直接相加不同检索器的原始相似分。')
 
-    # Text comparison is allowed to classify line-level changes as added,
-    # deleted, modified, or indeterminate.  It must not silently promote two
-    # different sentences into a mechanism/causal replacement claim.  Such a
-    # claim is only safe when the answer explicitly limits itself to wording
-    # or states that the substantive relationship is unknown.
-    if re.search(r'逐条比较|两侧原句|基准.*修订|修订.*基准', query):
-        # A local uncertainty clause does not certify an affirmative claim
-        # introduced after a contrast ("不能确定，但机制由A改为B").
-        for sentence in re.split(r'[。；\n]|[，,]\s*(?:但是?|然而|不过)', report):
-            if not re.search(r'由.{0,80}(?:改为|替换为|变更为)|(?:机制|规则|触发条件|时机|效果).{0,30}(?:改变|替换|转为)', sentence):
-                continue
-            if re.search(r'文字|字句|行级|仅.*比较|无法确定|不能确定|不足以(?:单独)?(?:证明|认定)|不能(?:单独|直接|据此)?(?:证明|认定)|未载明|不作.*定性|不判定', sentence):
-                continue
-            issues.append('文本比较越界：已发现行级文字差异，但未见原文直接支持机制/因果替换关系；应限定为文字变化或保留无法确定。')
+    from tools.comparison_claims import comparison_change_issues
+    issues.extend(comparison_change_issues(query, report))
 
     comparisons=[i for i in result.get('evidence',[]) if i.get('comparison_counts')]
     if any(i['comparison_counts'].get('modified',0)>0 for i in comparisons):

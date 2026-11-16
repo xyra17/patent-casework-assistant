@@ -113,6 +113,8 @@ def internet_search(
             ref=hashlib.sha256(raw.encode()).hexdigest()
             storage.save_context_artifact(thread_id,ref,raw)
             receipt['received_content_ref']=ref
+        from tools.evidence_coverage import defined_terms
+        receipt['observed_definitions'] = defined_terms(content)
         evidence_id = evidence.add(thread_id, {
             "type": "web",
             "title": title or f"网页结果 {i}",
@@ -124,7 +126,8 @@ def internet_search(
         prefix = f"[证据 {evidence_id}] " if evidence_id else ""
         content_label = '供应商返回的网页正文' if receipt['content_kind']=='provider_page_text' else '检索摘要，尚未取得网页正文'
         selection_note = ('；本次返回内容中命中关注词' if receipt['focus_found'] else '；本次返回内容未命中关注词，不能据此断言页面不存在相关内容') if focus else ''
-        blocks.append(f"{prefix}[{i}] {title}\nURL: {url}\n取证范围：{content_label}{selection_note}。\n内容: {content}")
+        coverage_note = ('\n已取得的定义条目（均在上方正文，不代表默认值或全页完整）：' + ', '.join(row['term'] for row in receipt['observed_definitions'])) if receipt['observed_definitions'] else ''
+        blocks.append(f"{prefix}[{i}] {title}\nURL: {url}\n取证范围：{content_label}{selection_note}。\n内容: {content}{coverage_note}")
     return "\n\n".join(blocks)
 
 

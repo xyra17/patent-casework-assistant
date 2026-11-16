@@ -101,6 +101,7 @@ def context_tools(thread_id: str, evidence_mapping: bool = True):
         if stopped:return stopped
         data={'evidence_id':evidence_id,'title':item.get('title'),'source':item.get('source'),
               'case_id':item.get('case_id'),'location':item.get('location'),'revision':item.get('revision'),
+              'web_excerpt':item.get('web_excerpt'),
               'quote_options':quote_options(item),
               'scope':'引文仅证明逐字出处，不证明比较、推理或结论成立；仍须内容复核。'}
         if item.get('answer_contract'):
@@ -262,6 +263,8 @@ class EvidenceContextMiddleware(AgentMiddleware):
                 'excerpt':self.manager._excerpt(str(item['snippet']),{'quantization','cache','outlier','per-channel','per-token','校准','量化'},180)})
             from tools.answer_contracts import quote_options
             selected[-1]['quote_options']=quote_options(item,limit=2)
+            if item.get('web_excerpt'):
+                selected[-1]['web_excerpt']=item['web_excerpt']
             if len(selected)>=3:break
         business_tables=[]
         for item in evidence.snapshot(self.thread_id):
