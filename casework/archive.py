@@ -99,8 +99,24 @@ def knowledge_status(company_status):
     if not parsed:
         return {**company_status, 'case_documents': 0, 'company_documents': company_status}
     roots = store.roots(enabled=True)
-    partial = any(r['state'] not in ('ready', 'scanning') for r in roots) or company_status['state'] == 'error'
-    return {'ok': not partial, 'state': 'partial' if partial else 'ok',
-            'label': '部分可用' if partial else '已就绪',
-            'detail': f'{len(store.list_cases())} 件案件 · {parsed} 份已解析案卷文件',
-            'case_documents': parsed, 'company_documents': company_status}
+    issues = []
+    for root in roots:
+        if root['state'] in ('ready', 'scanning'):
+            continue
+        reason = {
+            'needs_confirmation': '源目录大量文件缺失，待核对；已保留原有解析记录',
+            'needs_rescan': '目录需要重新扫描',
+            'partial': '部分文件尚未成功解析，请查看目录同步记录',
+            'error': '目录同步失败，请查看目录同步记录',
+        }.get(root['state'], '目录尚未完成同步')
+        issues.append({'root_id': root['id'], 'label': root['label'], 'state': root['state'], 'reason': reason})
+    if company_status['state'] == 'error':
+        issues.append({'state': 'error', 'reason': '公司文档索引不可用：' + company_status.get('detail', '请检查索引')})
+    detail = f'{len(store.list_cases())} 件案件 · {parsed} 份已解析案卷文件'
+    if issues:
+        detail += '；' + '；'.join(dict.fromkeys(issue['reason'] for issue in issues))
+    elif company_status['state'] == 'empty':
+        detail += '；公司文档未接入'
+    return {'ok': not issues, 'state': 'partial' if issues else 'ok',
+            'label': '部分可用' if issues else '已就绪', 'detail': detail,
+            'issues': issues, 'case_documents': parsed, 'company_documents': company_status}

@@ -293,21 +293,22 @@ def format_plan_prompt(plan: TaskPlan) -> str:
     assumptions = "\n".join(f"- {item}" for item in plan.assumptions) or "无"
     forbidden = "、".join(plan.forbidden_sources) or "无明确禁止来源"
     report_requirement = "覆盖用户所问结论与依据，围绕任务组织内容，简洁完整"
-    return f"""【系统任务计划（已确定，必须遵守）】
+    return f"""【系统任务计划】
 任务类型：{type_text}
 是否生成报告：{"是" if plan.require_report else "否"}
 是否必须生成 PDF：{"是" if plan.require_pdf else "否"}
 报告验收：{report_requirement}
 必须实际检索的数据源：{sources}
 禁止使用的数据源：{forbidden}
-执行步骤：
+建议执行步骤（需对照用户要求与实际证据）：
 {steps}
 输出产物：{artifacts}
-约束/假设：
+待验证假设（规划器建议，不是用户要求或已知事实）：
 {assumptions}
 
 执行要求：
-- 严格按上述计划执行，不要增加计划之外的数据源或文件类型。
+- 来源权限及文件交付约束必须遵守；用户原始要求优先于规划器生成的步骤和假设。
+- 域名、参数和对象限定须来自用户明确要求或真实资料；规划器猜测不能增加用户未提出的要求，证据不符时修正假设，不把假设称为用户指定。
 - required_sources 是本次开放的来源；必须获得实际检索结果，调用失败不等于完成。
 - required_sources 为空时无需调用子智能体，按计划读取必要附件或使用已有证据；有文件交付时仍可生成文件。
 - 仅交付上述计划产物；PDF所需Markdown为转换中间产物。文件先取得证据，再生成和核实，不承诺未实现的格式。

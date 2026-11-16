@@ -4,15 +4,29 @@ Only quotation content is released. Surrounding model explanations, inferred
 similarities and task-level conclusions do not inherit literal verification.
 """
 import hashlib,re,html,json,math
-from tools.evidence_refs import _QUOTED_REF,_quote_supported,citation_issues,quoted_text_group
+from tools.evidence_refs import _QUOTED_REF,_quote_supported,citation_issues,quoted_text_group,_literal
 from tools.citation_scope import case_ref_identity_checks
+
+
+# Short complete source clauses are useful too. A short fragment inside a
+# larger value (for example "7" inside "17天") is not independently released.
+_PARTIAL_QUOTED_REF = re.compile(_QUOTED_REF.pattern.replace('{12,}', '{1,}'))
+
+
+def _partial_quote_supported(quote, text):
+    if not _quote_supported(quote,text):
+        return False
+    if len(_literal(quote)) >= 12:
+        return True
+    clauses=re.split(r'[\n。！？；:：]',text)
+    return any(_literal(quote)==_literal(clause.strip()) for clause in clauses)
 
 
 def verify_literal_claims(report,evidence):
     by_id={e.get('id'):e for e in evidence}
     identities=case_ref_identity_checks(report,evidence)
     claims=[]
-    for match in _QUOTED_REF.finditer(report):
+    for match in _PARTIAL_QUOTED_REF.finditer(report):
         group=quoted_text_group(match)
         quote=match[group];refs=re.findall(r'\[(S[1-9]\d*)\]',match[group+1])
         related=[c for c in identities if c['span']['start']<=match.start()<c['span']['end']]
@@ -24,7 +38,7 @@ def verify_literal_claims(report,evidence):
             if (not failed_identity and item.get('task_scope_compatible') is not False
                     and item.get('type') in ('knowledge','file','upload','web')
                     and (item.get('location') or item.get('type')=='web' and item.get('url'))
-                    and _quote_supported(quote,text)):
+                    and _partial_quote_supported(quote,text)):
                 valid.append(ref)
         cid='literal-'+hashlib.sha256((str(match.start())+quote).encode()).hexdigest()[:16]
         claims.append({'claim_id':cid,'text':quote,'span':{'start':match.start(),'end':match.end()},

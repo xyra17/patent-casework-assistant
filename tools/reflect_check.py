@@ -156,10 +156,12 @@ def hard_check(result: dict) -> list[str]:
     # claim is only safe when the answer explicitly limits itself to wording
     # or states that the substantive relationship is unknown.
     if re.search(r'逐条比较|两侧原句|基准.*修订|修订.*基准', query):
-        for sentence in re.split(r'[。；\n]', report):
+        # A local uncertainty clause does not certify an affirmative claim
+        # introduced after a contrast ("不能确定，但机制由A改为B").
+        for sentence in re.split(r'[。；\n]|[，,]\s*(?:但是?|然而|不过)', report):
             if not re.search(r'由.{0,80}(?:改为|替换为|变更为)|(?:机制|规则|触发条件|时机|效果).{0,30}(?:改变|替换|转为)', sentence):
                 continue
-            if re.search(r'文字|字句|行级|仅.*比较|无法确定|未载明|不作.*定性|不判定', sentence):
+            if re.search(r'文字|字句|行级|仅.*比较|无法确定|不能确定|不足以(?:单独)?(?:证明|认定)|不能(?:单独|直接|据此)?(?:证明|认定)|未载明|不作.*定性|不判定', sentence):
                 continue
             issues.append('文本比较越界：已发现行级文字差异，但未见原文直接支持机制/因果替换关系；应限定为文字变化或保留无法确定。')
 
@@ -168,6 +170,10 @@ def hard_check(result: dict) -> list[str]:
         plain=report.replace('**','')
         if re.search(r'未(?:删去|删除).{0,15}(?:任何|全部|所有)(?:句子|原句|内容)|(?:文本|文字)超集',plain):
             issues.append('修改与保留断言矛盾：存在替换原句时，不能说新版保留基准版所有句子或是文本超集；删除记录为零仅表示没有独立删除项，不表示被替换旧句仍然保留。')
+
+    from tools import product_boundary
+    issues.extend(product_boundary.source_binding_issues(
+        product_boundary.current(), report, result.get('evidence', [])))
 
     # H4 数据源覆盖
     called = set(result.get("called_sources", []))

@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 from typing import Literal
 
-VERSION = 'product-responsibility-v1.1.0'
+VERSION = 'product-responsibility-v1.2.0'
 PROFILES = ('case-materials', 'document-comparison', 'disclosure-search',
             'public-reference', 'uploaded-table-analysis')
 _current = ContextVar('product_responsibility', default=None)
@@ -45,7 +45,8 @@ def request_contract(query, product):
         judgments=labels
     from tools.chart_utils import task_needs_charts
     return {**value,'chart_required':task_needs_charts(query),'version':VERSION,'query_sha256':hashlib.sha256(query.encode()).hexdigest(),
-            'professional_judgments':judgments,'human_confirmation':None}
+            'professional_judgments':judgments,'human_confirmation':None,
+            'output_policy':'deliver_supported_parts_with_explicit_gaps'}
 
 
 @contextmanager
@@ -63,12 +64,16 @@ def prompt():
     if not contract:return ''
     instructions={
         'case-materials':'分别交付负责人及案件信息、会议明确待补事项和原文来源；技术解释为有据初步摘要，专业判断待人工确认。审查未完成不能称完整报告。',
-        'document-comparison':'必须使用compare_uploaded_files作双侧文字比较（include_unchanged=true，分页完整）。文字差异只说明原句增删改及位置。不得由文字替换推出机制替换或同一性。技术影响、机制关系只能作为有据初步分析，待人工确认；保留语义越界拦截，不用免责声明掩盖错误。',
+        'document-comparison':'必须使用compare_uploaded_files作双侧文字比较（include_unchanged=true，分页完整）。文字差异只说明原句增删改及位置。每侧原句与分析必须引用对应的实际[S编号]，不能只写文件名或行号。不得由文字替换推出机制替换或同一性。技术影响、机制关系只能作为有据初步分析，待人工确认；保留语义越界拦截，不用免责声明掩盖错误。',
         'disclosure-search':'分开列出检索候选及两侧原文位置、可核验排序依据、适用条件与缺口；匹配分不是机制等价或专利专业结论。专业推荐仅为初步分析，待人工确认；上传原件定位失败必须未完成。',
         'public-reference':'真实检索公开来源，优先官方。区分网页原文、有据解释及推断，保留URL标题及引文定位。用户问RRF时完整说明公式、倒数贡献、原始相似分不直接求和；证据不足或关键解释缺失为未完成。',
         'uploaded-table-analysis':'全部筛选、去重、聚合及图表数据由结构化工具计算。按案号去除完全重复记录用read_file_content的deduplicate_by实际字段参数，先去重再筛选。提供程序aggregation_proof唯一值集合、来源行、文件哈希与统计口径，不能自行写去重证明。未知阶段另列，0和未知不同。仅字段/口径真有歧义时请求澄清，不能以人工审核替代计算失败。',
     }
-    return '\n【本次产品职责契约 '+VERSION+'】\n'+instructions[contract['profile']]
+    assistance=('先交付现有证据能够支撑的回答与初步分析，逐项说明未完成内容、原因及需要补充的材料。'
+                '部分缺口不能抹掉已核对的结果；可以交付部分结果，但不能将其标成完整通过。'
+                '不需要等待人工审批才交付可核对内容，不以转人工或免责声明替代查证与分析。'
+                '错误引用、跨对象推断和无原文依据的强结论仍须删除或修正。')
+    return '\n【本次产品职责契约 '+VERSION+'】\n'+assistance+instructions[contract['profile']]
 
 
 async def prepare_objective(thread_id):
@@ -138,6 +143,30 @@ def _sources(items, ids):
     return result
 
 
+def source_binding_issues(contract, text, items):
+    """Check requested evidence links before release and when reading history."""
+    if not contract or contract.get('profile') not in ('document-comparison','disclosure-search','public-reference'):
+        return []
+    refs=set(re.findall(r'\[(S\d+)\]',text))
+    sources=_sources(items,refs)
+    issues=[]
+    if not sources or refs-set(s['id'] for s in sources) or any(not s['valid'] for s in sources):
+        issues.append('关键来源、版本或定位未完整绑定；回答中的原文与分析须引用实际来源编号')
+    valid=[s for s in sources if s['valid']]
+    profile=contract['profile']
+    if profile=='document-comparison':
+        expected=contract.get('ordered_files') or []
+        cited={s['title'] for s in valid if s['type']=='file'}
+        if len(expected)!=2 or not set(expected)<=cited:
+            issues.append('双侧文字对照须分别引用基准与对比附件的真实来源编号及位置')
+    elif profile=='disclosure-search':
+        if not any(s['type']=='file' for s in valid) or not any(s['type']=='knowledge' and s['case_id'] for s in valid):
+            issues.append('上传原件与历史候选的双侧定位未完成；两侧原文须分别引用实际来源')
+    elif profile=='public-reference' and not any(s['type']=='web' for s in valid):
+        issues.append('无真实公开网页来源及可定位引文')
+    return issues
+
+
 def assessment(run, review, facts, completeness, delivery):
     events=run.get('events') or []
     contract=next((e.get('data') for e in reversed(events) if e.get('event')=='product_boundary_request'),None)
@@ -152,8 +181,10 @@ def assessment(run, review, facts, completeness, delivery):
         and facts['status']=='passed' and completeness['status']=='passed'
         and not review.get('hard_issues') and not review.get('soft_issue'))
     if not released:issues.append('最终正文未完成对应的事实、完整性及交付审查，不能作为已核验终稿')
-    if not sources or refs-set(s['id'] for s in sources) or any(not s['valid'] for s in sources):
+    if profile not in ('document-comparison','disclosure-search','public-reference') and (
+            not sources or refs-set(s['id'] for s in sources) or any(not s['valid'] for s in sources)):
         issues.append('关键来源、版本或定位未完整绑定')
+    issues.extend(source_binding_issues(contract,text,items))
     objective=None
     if profile=='document-comparison':
         objective=next((e.get('data') for e in reversed(events) if e.get('event')=='product_objective'),None)
@@ -164,11 +195,6 @@ def assessment(run, review, facts, completeness, delivery):
             issues.append('程序双侧文字对照不完整或来源未绑定')
         elif len(proof_sources)!=len(set(objective['source_ids'])):
             issues.append('文字对照证据记录缺失')
-    if profile=='disclosure-search':
-        if not any(s['type']=='file' and s['valid'] for s in sources) or not any(s['type']=='knowledge' and s['case_id'] and s['valid'] for s in sources):
-            issues.append('上传原件与历史候选的双侧定位未完成')
-    if profile=='public-reference' and not any(s['type']=='web' and s['valid'] for s in sources):
-        issues.append('无真实公开网页来源及可定位引文')
     program_tables=[]
     if profile=='uploaded-table-analysis':
         for item in items:

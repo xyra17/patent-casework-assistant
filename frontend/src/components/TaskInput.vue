@@ -94,7 +94,6 @@
         </el-dropdown>
       </div>
       <span class="foot-hint">支持表格 / Word / PDF / 图片上传 · 文件按会话独立存储</span>
-      <span class="foot-hint" role="note">已转人工：{{ MANUAL_WORKFLOWS.map(item => item.label).join('、') }}</span>
     </div>
   </div>
 </template>
@@ -103,7 +102,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { Setting } from '@element-plus/icons-vue'
 import { store, toast } from '../store'
-import { TASK_GROUPS, MANUAL_WORKFLOWS, taskTemplates, featuredTemplates, groupedTemplates, attachmentRequirement, attachmentTaskContext } from '../taskTemplates'
+import { TASK_GROUPS, taskTemplates, featuredTemplates, groupedTemplates, attachmentRequirement, attachmentTaskContext } from '../taskTemplates'
 import { ATTACHMENT_ACCEPT, stageAttachments } from '../sessionFiles'
 import SourceSelector from './SourceSelector.vue'
 import {readSourcePreference, saveSourcePreference} from '../sourceSelection'

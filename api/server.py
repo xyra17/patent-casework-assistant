@@ -364,14 +364,6 @@ async def _execute_task(thread_id: str, query: str, max_rounds: int = 3) -> None
 @app.post("/api/task")
 async def submit_task(body: TaskRequest) -> dict:
     """提交任务：创建会话目录、上报 session_created，异步执行并立即返回 thread_id。"""
-    if body.product_context:
-        catalog = json.loads((path_utils.RESOURCE_ROOT / 'config/session-examples.json').read_text(encoding='utf-8'))
-        manual = next((item for item in catalog.get('manual_workflows', [])
-                       if item['template_id'] == body.product_context.profile), None)
-        if manual:
-            raise HTTPException(410, {'code': 'manual_workflow',
-                'message': manual['label'] + '已移出自动业务范围，请人工处理。',
-                'scenario_id': manual['scenario_id'], 'manual_steps': manual['manual_steps']})
     from casework.privacy import ensure_model_allowed
     try:ensure_model_allowed()
     except PermissionError as exc:raise HTTPException(403,str(exc)) from exc

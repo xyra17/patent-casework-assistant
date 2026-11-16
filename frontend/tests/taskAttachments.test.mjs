@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {stageAttachments,prepareTaskAttachments,comparisonQuery} from '../src/sessionFiles.js'
-import {QUICK_TEMPLATES,MANUAL_WORKFLOWS,TASK_GROUPS,taskTemplates,featuredTemplates,groupedTemplates,attachmentRequirement,attachmentTaskContext} from '../src/taskTemplates.js'
+import {QUICK_TEMPLATES,TASK_GROUPS,taskTemplates,featuredTemplates,groupedTemplates,attachmentRequirement,attachmentTaskContext} from '../src/taskTemplates.js'
 
 test('featured business entries keep their source permissions independently of menu ordering',()=>{
   const featured=featuredTemplates([...QUICK_TEMPLATES].reverse())
@@ -21,10 +21,10 @@ test('department catalog refreshes stale backend templates while custom catalogs
   assert.deepEqual(featuredTemplates(taskTemplates(custom),custom),custom.quick_templates)
 })
 
-test('shared comparison utility preserves attachment validation for manually handled documents',()=>{
+test('document comparison keeps two-file validation and selected order',()=>{
   assert.equal(new Set(QUICK_TEMPLATES.map(t=>t.id)).size,QUICK_TEMPLATES.length)
   for(const group of TASK_GROUPS) assert.ok(groupedTemplates(QUICK_TEMPLATES,group.id).length)
-  const doc={allowed_sources:[],attachments:{min:2,max:2,kind:'documents',hint:'请选择两份文档'}}
+  const doc=QUICK_TEMPLATES.find(t=>t.id==='document-comparison')
   assert.deepEqual(doc.allowed_sources,[])
   assert.ok(attachmentRequirement(doc,[]))
   assert.equal(attachmentRequirement(doc,[{name:'old.docx'},{name:'new.pdf'}]),'')
@@ -32,10 +32,9 @@ test('shared comparison utility preserves attachment validation for manually han
   assert.match(attachmentTaskContext(doc,[{name:'old.pdf'},{name:'new.pdf'}]),/基准文件："old.pdf"；对比文件："new.pdf"/)
 })
 
-test('active scenarios retain disclosure delivery and table statistics while standalone web research is manual',()=>{
+test('research and attachment scenarios retain independent source permissions',()=>{
   const get=id=>QUICK_TEMPLATES.find(t=>t.id===id)
-  assert.equal(get('public-reference'),undefined)
-  const web={allowed_sources:['web_search'],mode:'quick'}
+  const web=get('public-reference')
   assert.deepEqual(web.allowed_sources,['web_search'])
   assert.equal(web.mode,'quick')
   const company=get('company-guidance')
@@ -109,14 +108,19 @@ test('existing-session comparison binds both chosen files without changing exter
 })
 
 
-test('retired standalone scenarios never return through cached or custom recommendations',()=>{
-  const retired=MANUAL_WORKFLOWS.map(item=>({id:item.template_id,label:item.label}))
-  assert.equal(QUICK_TEMPLATES.length,19)
-  assert.deepEqual(MANUAL_WORKFLOWS.map(item=>item.scenario_id),['S12','S14','S16'])
-  assert.ok(retired.every(item=>!QUICK_TEMPLATES.some(active=>active.id===item.id)))
-  const cached={quick_templates:[...retired,...QUICK_TEMPLATES],featured_template_ids:retired.map(item=>item.id)}
-  assert.deepEqual(taskTemplates(cached),QUICK_TEMPLATES)
-  assert.ok(featuredTemplates(cached.quick_templates,cached).every(item=>!retired.some(r=>r.id===item.id)))
+test('all assistance entries are available and stale department catalogs refresh',()=>{
+  assert.equal(QUICK_TEMPLATES.length,22)
+  for(const id of ['document-comparison','disclosure-search','public-reference']) {
+    const item=QUICK_TEMPLATES.find(t=>t.id===id)
+    assert.ok(item)
+    const cached={task_examples_catalog:'department',quick_templates:QUICK_TEMPLATES.filter(t=>t.id!==id)}
+    assert.ok(taskTemplates(cached).some(t=>t.id===id))
+    assert.ok(featuredTemplates(QUICK_TEMPLATES,{featured_template_ids:[id]}).some(t=>t.id===id))
+  }
+  const disclosure=QUICK_TEMPLATES.find(t=>t.id==='disclosure-search')
+  assert.deepEqual(disclosure.allowed_sources,['knowledge'])
+  assert.ok(attachmentRequirement(disclosure,[]))
+  assert.equal(attachmentRequirement(disclosure,[{name:'交底.docx'}]),'')
   const facts=QUICK_TEMPLATES.find(item=>item.id==='case-materials')
   assert.equal(facts.label,'案件信息与会议待办')
   assert.deepEqual(facts.allowed_sources,['db_query'])
