@@ -18,8 +18,6 @@ README 里保留一张静态预览，完整交互版通过 GitHub Pages 打开�
 
 [![Patent Casework Assistant system architecture](docs/architecture/overview.png)](https://xyra17.github.io/patent-casework-assistant/architecture/)
 
-图表说明和 JSON 源文件位于 [`docs/architecture/`](docs/architecture/)。GitHub Actions 会在 `main` 分支更新后发布 `docs/` 目录。
-
 ## 业务场景
 
 | 场景 | 使用方式 |
