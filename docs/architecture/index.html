@@ -119,7 +119,19 @@
         });
         frames.set(diagram.id, frame);
         panel.append(frame);
-        frame.srcdoc = diagram.html;
+        const srcdoc = diagram.id === 'retrieval'
+          ? diagram.html.replace(
+              '</style>',
+              `
+    /* Keep dataflow relationship classifications visible in the normal view. */
+    .diagram-container svg g[data-detail="context"] > text[data-detail="fine"] {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  </style>`
+            )
+          : diagram.html;
+        frame.srcdoc = srcdoc;
       }
 
       function select(id, focus = false) {
